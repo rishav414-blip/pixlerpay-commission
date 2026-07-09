@@ -1,0 +1,20 @@
+{
+  "name": "pixlerpay-commission",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "import-accounts": "node scripts/import-accounts.js",
+    "download-report": "node scripts/download-report.js",
+    "calculate": "node scripts/calculate-commission.js",
+    "upload-to-drive": "node scripts/upload-to-drive.js",
+    "all": "npm run download-report && npm run calculate && npm run upload-to-drive"
+  },
+  "dependencies": {
+    "playwright": "^1.47.0",
+    "dotenv": "^16.4.5",
+    "xlsx": "^0.18.5",
+    "csv-parse": "^5.5.6",
+    "googleapis": "^144.0.0"
+  }
+}

@@ -1,0 +1,167 @@
+{
+  "generatedAt": "2026-07-09T15:23:26.442Z",
+  "sourceReports": [
+    "BITNEXY-PVT-LTD-payout-report.csv",
+    "Curiobyte-IT-Solutions-Pvt-Ltd-payout-report.csv",
+    "DATSHA-SOLUTION-PVT-LTD-payout-report.csv",
+    "EIENON-TECHNOLOGY-PRIVATE-LIMITED-payout-report.csv",
+    "Elleaura-cybertech-services-pvt-ltd-payout-report.csv",
+    "Emervex-Technosoft-pvt-ltd-payout-report.csv",
+    "FINFLEX-INFRA-PVT-LTD-payout-report.csv",
+    "GLOBAL-BOOKS-TRADING-PVT-LTD-payout-report.csv",
+    "PPAY-SOLUTION-PRIVATE-LIMITED-payout-report.csv",
+    "RASHEEYA-TECHNOLOGY-PRIVATE-LIMITED-payout-report.csv",
+    "SERVM-TECHNO-INNOVATIONS-PRIVATE-LIMITED-payout-report.csv",
+    "SOSHY-ONLINE-PRIVATE-LIMITED-payout-report.csv",
+    "SRKA-WS-PRIVATE-LIMITED-payout-report.csv",
+    "suvika-Vaitnik-Pay-Private-Limited-payout-report.csv",
+    "WESERV-TECHNO-INNOVATIVE-PVT-LTD-payout-report.csv",
+    "WESURE-TECHNO-INNOVATIONS-PRIVATE-LIMITED-payout-report.csv",
+    "XPASSPHERE-TECHNO-PRIVATE-LIMITED-payout-report.csv"
+  ],
+  "skippedReports": [],
+  "totalSuccessfulTxns": 95530,
+  "totalCommission": 605169.94,
+  "clients": [
+    {
+      "clientName": "Curiobyte IT Solutions Pvt Ltd",
+      "va": "SAM295",
+      "onboardedPct": 1.1,
+      "resellerPct": 1,
+      "marginPct": 0.1,
+      "successfulTxns": 28754,
+      "totalAmount": 216726442.73,
+      "totalCommission": 216726.44
+    },
+    {
+      "clientName": "SERVM TECHNO INNOVATIONS PRIVATE LIMITED",
+      "va": "SAM256",
+      "onboardedPct": 1.3,
+      "resellerPct": 1,
+      "marginPct": 0.3,
+      "successfulTxns": 8911,
+      "totalAmount": 35477978,
+      "totalCommission": 106433.93
+    },
+    {
+      "clientName": "SRKA WS PRIVATE LIMITED",
+      "va": "SAM294",
+      "onboardedPct": 1.1,
+      "resellerPct": 1,
+      "marginPct": 0.1,
+      "successfulTxns": 14590,
+      "totalAmount": 76842778,
+      "totalCommission": 81153.46
+    },
+    {
+      "clientName": "RASHEEYA TECHNOLOGY PRIVATE LIMITED",
+      "va": "SAM286",
+      "onboardedPct": 1.2,
+      "resellerPct": 1,
+      "marginPct": 0.2,
+      "successfulTxns": 18819,
+      "totalAmount": 31766562,
+      "totalCommission": 68309.32
+    },
+    {
+      "clientName": "GLOBAL BOOKS TRADING PVT LTD",
+      "va": "SAM328",
+      "onboardedPct": 1.2,
+      "resellerPct": 1,
+      "marginPct": 0.2,
+      "successfulTxns": 7827,
+      "totalAmount": 27424213,
+      "totalCommission": 54851.23
+    },
+    {
+      "clientName": "SOSHY ONLINE PRIVATE LIMITED",
+      "va": "SAM338",
+      "onboardedPct": 1.2,
+      "resellerPct": 1,
+      "marginPct": 0.2,
+      "successfulTxns": 963,
+      "totalAmount": 9949859,
+      "totalCommission": 19982.23
+    },
+    {
+      "clientName": "DATSHA SOLUTION PVT LTD",
+      "va": "SAM349",
+      "onboardedPct": 1.2,
+      "resellerPct": 1,
+      "marginPct": 0.2,
+      "successfulTxns": 4194,
+      "totalAmount": 7538795,
+      "totalCommission": 15102.19
+    },
+    {
+      "clientName": "Emervex Technosoft pvt ltd",
+      "va": "SAM288",
+      "onboardedPct": 1.1,
+      "resellerPct": 1,
+      "marginPct": 0.1,
+      "successfulTxns": 4133,
+      "totalAmount": 14964310,
+      "totalCommission": 14964.31
+    },
+    {
+      "clientName": "suvika Vaitnik Pay Private Limited",
+      "va": "SAM358",
+      "onboardedPct": 1.2,
+      "resellerPct": 1,
+      "marginPct": 0.2,
+      "successfulTxns": 2905,
+      "totalAmount": 4254282,
+      "totalCommission": 8630.03
+    },
+    {
+      "clientName": "BITNEXY PVT LTD",
+      "va": "SAM299",
+      "onboardedPct": 1.2,
+      "resellerPct": 1,
+      "marginPct": 0.2,
+      "successfulTxns": 916,
+      "totalAmount": 3382602.51,
+      "totalCommission": 6765.21
+    },
+    {
+      "clientName": "PPAY SOLUTION PRIVATE LIMITED",
+      "va": "SAM348",
+      "onboardedPct": 1.2,
+      "resellerPct": 1,
+      "marginPct": 0.2,
+      "successfulTxns": 3041,
+      "totalAmount": 3230540.99,
+      "totalCommission": 6549.68
+    },
+    {
+      "clientName": "XPASSPHERE TECHNO PRIVATE LIMITED",
+      "va": "SAM353",
+      "onboardedPct": 1.1,
+      "resellerPct": 1,
+      "marginPct": 0.1,
+      "successfulTxns": 343,
+      "totalAmount": 2933675,
+      "totalCommission": 2948.08
+    },
+    {
+      "clientName": "WESERV TECHNO INNOVATIVE PVT LTD",
+      "va": "SAM255",
+      "onboardedPct": 1.3,
+      "resellerPct": 1,
+      "marginPct": 0.3,
+      "successfulTxns": 32,
+      "totalAmount": 852275,
+      "totalCommission": 2556.83
+    },
+    {
+      "clientName": "EIENON TECHNOLOGY PRIVATE LIMITED",
+      "va": "SAM262",
+      "onboardedPct": 1.2,
+      "resellerPct": 1,
+      "marginPct": 0.2,
+      "successfulTxns": 102,
+      "totalAmount": 93002.4,
+      "totalCommission": 197
+    }
+  ]
+}

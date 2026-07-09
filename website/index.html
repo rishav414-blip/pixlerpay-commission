@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PixlerPay Commission Dashboard</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --card: #12181f;
+    --border: #232b34;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --accent: #3fb950;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f8fa;
+      --card: #ffffff;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --muted: #57606a;
+      --accent: #1a7f37;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 2rem;
+  }
+  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+  .meta { color: var(--muted); font-size: 0.85rem; margin-bottom: 1.5rem; }
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+  .stat {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+  }
+  .stat .label { color: var(--muted); font-size: 0.8rem; }
+  .stat .value { font-size: 1.5rem; font-weight: 600; margin-top: 0.25rem; }
+  .stat .value.accent { color: var(--accent); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.65rem 1rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9rem;
+  }
+  th {
+    color: var(--muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.72rem;
+    letter-spacing: 0.03em;
+  }
+  tr:last-child td { border-bottom: none; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .empty { color: var(--muted); padding: 2rem; text-align: center; }
+  .table-wrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+  <h1>PixlerPay Commission Dashboard</h1>
+  <div class="meta" id="meta">Loading...</div>
+
+  <div class="summary">
+    <div class="stat">
+      <div class="label">Total Successful Transactions</div>
+      <div class="value" id="totalTxns">-</div>
+    </div>
+    <div class="stat">
+      <div class="label">Total Commission</div>
+      <div class="value accent" id="totalCommission">-</div>
+    </div>
+    <div class="stat">
+      <div class="label">Clients with Activity</div>
+      <div class="value" id="clientCount">-</div>
+    </div>
+    <div class="stat">
+      <div class="label">Skipped Reports</div>
+      <div class="value" id="unmatched">-</div>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table id="clientTable">
+      <thead>
+        <tr>
+          <th>Client Name</th>
+          <th>VA</th>
+          <th class="num">Margin %</th>
+          <th class="num">Successful Txns</th>
+          <th class="num">Total Amount (Rs)</th>
+          <th class="num">Commission (Rs)</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+
+  <script>
+    async function load() {
+      try {
+        const res = await fetch('commission-results.json', { cache: 'no-store' });
+        if (!res.ok) throw new Error('No results file yet');
+        const data = await res.json();
+        render(data);
+      } catch (e) {
+        document.getElementById('meta').textContent = 'No commission-results.json found yet. Run the calculation script first.';
+      }
+    }
+
+    function fmtMoney(n) {
+      return 'Rs ' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    }
+
+    function render(data) {
+      document.getElementById('meta').textContent =
+        `Reports: ${data.sourceReports.length} | Generated: ${new Date(data.generatedAt).toLocaleString()}`;
+      document.getElementById('totalTxns').textContent = data.totalSuccessfulTxns;
+      document.getElementById('totalCommission').textContent = fmtMoney(data.totalCommission);
+      document.getElementById('clientCount').textContent = data.clients.length;
+      document.getElementById('unmatched').textContent = (data.skippedReports || []).length;
+
+      const tbody = document.getElementById('tableBody');
+      if (data.clients.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty">No matched successful transactions found.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = data.clients.map((c) => `
+        <tr>
+          <td>${c.clientName}</td>
+          <td>${c.va}</td>
+          <td class="num">${c.marginPct != null ? c.marginPct.toFixed(2) + '%' : '-'}</td>
+          <td class="num">${c.successfulTxns}</td>
+          <td class="num">${fmtMoney(c.totalAmount)}</td>
+          <td class="num">${fmtMoney(c.totalCommission)}</td>
+        </tr>
+      `).join('');
+    }
+
+    load();
+  </script>
+</body>
+</html>

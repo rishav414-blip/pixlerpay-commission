@@ -1,0 +1,13 @@
+node_modules/
+.env
+data/accounts.json
+data/chrome-passwords.csv
+data/*passwords*.csv
+*passwords*.csv
+Chrome Passwords.csv
+data/*.csv
+data/*.xlsx
+data/*.xls
+data/raw-reports/
+data/gdrive-service-account.json
+!data/.gitkeep

@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PixlerPay Commission Ledger</title>
+</head>
+<body>
+<style>
+  :root {
+    --bg: #12141c;
+    --surface: #191c26;
+    --surface-2: #20242f;
+    --border: #2b2f3d;
+    --text: #edeff4;
+    --text-muted: #8891a5;
+    --accent: #c9a24c;
+    --accent-soft: rgba(201, 162, 76, 0.14);
+    --success: #5ea378;
+    --success-soft: rgba(94, 163, 120, 0.14);
+    --warn: #cf8d4f;
+    --danger: #cf6161;
+    --serif: Iowan Old Style, Palatino Linotype, Palatino, Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  :root[data-theme="light"] {
+    --bg: #f4f2ec; --surface: #fdfcf9; --surface-2: #f0ede4; --border: #ddd7c8;
+    --text: #211f1a; --text-muted: #6b6558; --accent: #9c7823; --accent-soft: rgba(156, 120, 35, 0.1);
+    --success: #3d7a54; --success-soft: rgba(61, 122, 84, 0.12); --warn: #a65f22; --danger: #b0463f;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f2ec; --surface: #fdfcf9; --surface-2: #f0ede4; --border: #ddd7c8;
+      --text: #211f1a; --text-muted: #6b6558; --accent: #9c7823; --accent-soft: rgba(156, 120, 35, 0.1);
+      --success: #3d7a54; --success-soft: rgba(61, 122, 84, 0.12); --warn: #a65f22; --danger: #b0463f;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); -webkit-font-smoothing: antialiased; padding: clamp(20px, 4vw, 56px); }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  header.masthead { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 16px; padding-bottom: 20px; border-bottom: 1px solid var(--border); margin-bottom: 28px; }
+  .masthead-title { font-family: var(--serif); font-size: clamp(26px, 3.4vw, 34px); font-weight: 500; letter-spacing: 0.01em; text-wrap: balance; margin: 0; }
+  .masthead-sub { font-size: 13px; color: var(--text-muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .masthead-period { text-align: right; font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  .masthead-period strong { display: block; font-family: var(--serif); font-size: 15px; color: var(--accent); text-transform: none; letter-spacing: 0; margin-top: 2px; }
+
+  .live-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--success); }
+  .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+  .live-dot.stale { background: var(--warn); }
+  .live-dot.error { background: var(--danger); }
+  @media (prefers-reduced-motion: no-preference) {
+    .live-dot.fresh { animation: pulse 2s ease-in-out infinite; }
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  .ledger-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 3px; margin-bottom: 32px; overflow: hidden; }
+  .ledger-cell { padding: 20px 24px; border-right: 1px solid var(--border); }
+  .ledger-cell:last-child { border-right: none; }
+  .ledger-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--text-muted); margin-bottom: 10px; }
+  .ledger-figure { font-family: var(--serif); font-size: clamp(22px, 2.6vw, 30px); font-variant-numeric: tabular-nums; line-height: 1; }
+  .ledger-figure.accent { color: var(--accent); }
+  .ledger-figure small { font-family: var(--sans); font-size: 13px; color: var(--text-muted); font-weight: 400; margin-left: 4px; }
+
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+  .toolbar input[type="search"], .toolbar input[type="number"] { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 3px; padding: 9px 12px; font-size: 13.5px; font-family: var(--sans); }
+  .toolbar input[type="search"] { flex: 1 1 240px; min-width: 180px; }
+  .toolbar input[type="number"] { width: 130px; font-variant-numeric: tabular-nums; }
+  .toolbar input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .toolbar label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+  .toolbar-count { margin-left: auto; font-size: 12.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .btn-reset, .btn-refresh { background: none; border: 1px solid var(--border); color: var(--text-muted); border-radius: 3px; padding: 9px 13px; font-size: 13px; cursor: pointer; font-family: var(--sans); }
+  .btn-reset:hover, .btn-refresh:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-reset:focus-visible, .btn-refresh:focus-visible, .toolbar input:focus-visible, th button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 3px; background: var(--surface); }
+  table { width: 100%; border-collapse: collapse; min-width: 760px; }
+  thead th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-muted); padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface-2); white-space: nowrap; }
+  thead th button { background: none; border: none; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; padding: 0; display: inline-flex; align-items: center; gap: 4px; }
+  thead th button .arrow { opacity: 0.35; font-size: 10px; }
+  thead th button.active .arrow { opacity: 1; color: var(--accent); }
+  tbody td { padding: 13px 16px; border-bottom: 1px solid var(--border); font-size: 13.5px; vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: var(--accent-soft); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .client-name { font-weight: 500; }
+  .client-va { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 20px; background: var(--success-soft); color: var(--success); font-variant-numeric: tabular-nums; }
+  .commission-cell { color: var(--accent); font-weight: 600; }
+  .empty-row td, .state-row td { text-align: center; color: var(--text-muted); padding: 40px 16px; }
+
+  .idle-note { margin-top: 22px; padding: 14px 18px; border: 1px dashed var(--border); border-radius: 3px; font-size: 12.5px; color: var(--text-muted); display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .idle-note strong { color: var(--warn); font-weight: 600; }
+
+  .setup-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 3px; padding: 24px; margin-bottom: 24px; font-size: 13.5px; line-height: 1.6; }
+  .setup-panel h2 { font-family: var(--serif); font-size: 18px; margin: 0 0 10px; }
+  .setup-panel code { background: var(--surface-2); padding: 1px 6px; border-radius: 3px; font-size: 12.5px; }
+  .setup-panel .err { color: var(--danger); margin-top: 10px; font-size: 12.5px; }
+
+  footer { margin-top: 28px; font-size: 11.5px; color: var(--text-muted); text-align: center; }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <div>
+      <h1 class="masthead-title">PixlerPay Commission Ledger</h1>
+      <div class="masthead-sub" id="metaLine">Connecting to Google Drive…</div>
+    </div>
+    <div class="masthead-period">
+      <span class="live-badge"><span class="live-dot" id="liveDot"></span><span id="liveLabel">Connecting</span></span>
+      <strong id="periodLine">Last 30 days</strong>
+    </div>
+  </header>
+
+  <div id="setupPanel" class="setup-panel" hidden>
+    <h2>Not connected yet</h2>
+    <p>This page reads live data from Google Drive but hasn't been configured with a file ID and API key yet.</p>
+    <p>Once <code>npm run upload-to-drive</code> has been run at least once, provide the printed file ID and a Drive-API-restricted API key, and this page will be wired up to fetch live.</p>
+    <p class="err" id="setupError"></p>
+  </div>
+
+  <div id="app" hidden>
+    <section class="ledger-strip" id="ledgerStrip"></section>
+
+    <div class="toolbar">
+      <input type="search" id="searchInput" placeholder="Search client or VA…" aria-label="Search client or VA">
+      <label>Min commission (₹)
+        <input type="number" id="minCommission" placeholder="0" min="0" step="100">
+      </label>
+      <button class="btn-reset" id="resetBtn" type="button">Reset filters</button>
+      <button class="btn-refresh" id="refreshBtn" type="button">↻ Refresh</button>
+      <span class="toolbar-count" id="rowCount"></span>
+    </div>
+
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Client</th>
+            <th class="num"><button data-key="successfulTxns" type="button">Txns <span class="arrow">▾</span></button></th>
+            <th class="num"><button data-key="totalAmount" type="button">Volume (₹) <span class="arrow">▾</span></button></th>
+            <th class="num"><button data-key="marginPct" type="button">Margin <span class="arrow">▾</span></button></th>
+            <th class="num"><button data-key="totalCommission" type="button">Commission (₹) <span class="arrow">▾</span></button></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"><tr class="state-row"><td colspan="5">Loading…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="idle-note" id="idleNote" hidden>
+      <strong>No activity</strong>
+      <span id="idleNames"></span>
+      <span>&nbsp;had zero successful transactions in this window.</span>
+    </div>
+  </div>
+
+  <footer id="footerLine">Commission = Onboarded % − Reseller % (margin), applied to successful transactions only.</footer>
+</div>
+
+<script>
+  // ---- Google Drive connection -------------------------------------------
+  // Fill these in once npm run upload-to-drive has produced a file + you've
+  // created a Drive-API-restricted API key (see README.md "Google Drive sync").
+  const DRIVE_FILE_ID = 'REPLACE_WITH_FILE_ID';
+  const DRIVE_API_KEY = 'REPLACE_WITH_API_KEY';
+  const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // auto-refresh every 5 minutes
+
+  const driveUrl = `https://www.googleapis.com/drive/v3/files/${DRIVE_FILE_ID}?alt=media&key=${DRIVE_API_KEY}`;
+
+  function fmtINR(n) { return '₹' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 0 }); }
+  function fmtINR2(n) { return '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+  let DATA = null;
+  let sortKey = 'totalCommission';
+  let sortDir = -1;
+  let search = '';
+  let minCommission = 0;
+
+  const setupPanel = document.getElementById('setupPanel');
+  const app = document.getElementById('app');
+  const liveDot = document.getElementById('liveDot');
+  const liveLabel = document.getElementById('liveLabel');
+  const metaLine = document.getElementById('metaLine');
+
+  function setLiveState(state, label) {
+    liveDot.className = 'live-dot ' + state;
+    liveLabel.textContent = label;
+  }
+
+  async function fetchData() {
+    if (DRIVE_FILE_ID.startsWith('REPLACE_') || DRIVE_API_KEY.startsWith('REPLACE_')) {
+      setupPanel.hidden = false;
+      app.hidden = true;
+      setLiveState('error', 'Not configured');
+      metaLine.textContent = 'Waiting for Drive file ID + API key';
+      return;
+    }
+    setLiveState('fresh', 'Live');
+    try {
+      const res = await fetch(driveUrl, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Drive fetch failed: ${res.status} ${res.statusText}`);
+      const json = await res.json();
+      DATA = json;
+      setupPanel.hidden = true;
+      app.hidden = false;
+      renderAll();
+      setLiveState('fresh', 'Live · ' + new Date().toLocaleTimeString('en-IN'));
+    } catch (err) {
+      console.error(err);
+      setLiveState('error', 'Connection failed');
+      metaLine.textContent = 'Could not reach Google Drive: ' + err.message;
+      if (!DATA) {
+        setupPanel.hidden = false;
+        document.getElementById('setupError').textContent = err.message;
+        app.hidden = true;
+      }
+    }
+  }
+
+  function renderAll() {
+    metaLine.textContent = `${DATA.sourceReports.length} merchant accounts · generated ${new Date(DATA.generatedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}`;
+
+    const totalVolume = DATA.clients.reduce((s, c) => s + c.totalAmount, 0);
+    document.getElementById('ledgerStrip').innerHTML = `
+      <div class="ledger-cell"><div class="ledger-label">Successful Transactions</div><div class="ledger-figure">${DATA.totalSuccessfulTxns.toLocaleString('en-IN')}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Total Volume</div><div class="ledger-figure">${fmtINR(totalVolume)}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Total Commission (Margin)</div><div class="ledger-figure accent">${fmtINR2(DATA.totalCommission)}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Active Clients</div><div class="ledger-figure">${DATA.clients.length}<small>of ${DATA.sourceReports.length}</small></div></div>
+    `;
+
+    if (DATA.idleClients && DATA.idleClients.length) {
+      document.getElementById('idleNote').hidden = false;
+      document.getElementById('idleNames').textContent = DATA.idleClients.join(', ');
+    } else {
+      document.getElementById('idleNote').hidden = true;
+    }
+
+    renderTable();
+  }
+
+  function renderTable() {
+    const tbody = document.getElementById('tbody');
+    const rowCount = document.getElementById('rowCount');
+    if (!DATA) return;
+
+    let rows = DATA.clients.filter((c) => {
+      const hay = (c.clientName + ' ' + c.va).toLowerCase();
+      if (search && !hay.includes(search.toLowerCase())) return false;
+      if (c.totalCommission < minCommission) return false;
+      return true;
+    });
+    rows.sort((a, b) => (a[sortKey] - b[sortKey]) * sortDir);
+
+    if (rows.length === 0) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No clients match these filters.</td></tr>';
+    } else {
+      tbody.innerHTML = rows.map((c) => `
+        <tr>
+          <td><div class="client-name">${c.clientName}</div><div class="client-va">VA ${c.va} · ${c.onboardedPct.toFixed(2)}% onboarded − ${c.resellerPct.toFixed(2)}% reseller</div></td>
+          <td class="num">${c.successfulTxns.toLocaleString('en-IN')}</td>
+          <td class="num">${fmtINR(c.totalAmount)}</td>
+          <td class="num"><span class="pill">${c.marginPct.toFixed(2)}%</span></td>
+          <td class="num commission-cell">${fmtINR2(c.totalCommission)}</td>
+        </tr>
+      `).join('');
+    }
+    rowCount.textContent = `${rows.length} of ${DATA.clients.length} clients`;
+
+    document.querySelectorAll('thead th button').forEach((btn) => {
+      const active = btn.dataset.key === sortKey;
+      btn.classList.toggle('active', active);
+      btn.querySelector('.arrow').textContent = active ? (sortDir === 1 ? '▴' : '▾') : '▾';
+    });
+  }
+
+  document.getElementById('searchInput').addEventListener('input', (e) => { search = e.target.value; renderTable(); });
+  document.getElementById('minCommission').addEventListener('input', (e) => { minCommission = Number(e.target.value) || 0; renderTable(); });
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    search = ''; minCommission = 0;
+    document.getElementById('searchInput').value = '';
+    document.getElementById('minCommission').value = '';
+    renderTable();
+  });
+  document.getElementById('refreshBtn').addEventListener('click', fetchData);
+  document.querySelectorAll('thead th button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.key;
+      if (sortKey === key) sortDir *= -1; else { sortKey = key; sortDir = -1; }
+      renderTable();
+    });
+  });
+
+  fetchData();
+  setInterval(fetchData, REFRESH_INTERVAL_MS);
+</script>
+</body>
+</html>
