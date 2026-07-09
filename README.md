@@ -61,45 +61,31 @@ update this file to match (or ask me to re-sync it).
 To run this automatically on a schedule, use Windows Task Scheduler to run:
 `npm run all` inside this folder, e.g. daily at 9am.
 
-## Google Drive sync (one-time setup)
+## Google Drive sync + live dashboard (status: working, semi-automated)
 
-`npm run upload-to-drive` pushes `website/commission-results.json` to a
-Google Drive folder after every calculation, so the hosted web dashboard can
-read live data instead of a frozen snapshot. This uses a **service
-account** — a robot Google identity separate from your personal login, so
-it never expires and needs no re-authorization.
+The hosted dashboard is live at **https://rishav414-blip.github.io/pixlerpay-commission/**.
+It fetches `commission-results.json` directly from a Google Drive file on
+every page load (and auto-refreshes every 5 minutes), using a
+Drive-API-restricted API key embedded in `docs/index.html`.
 
-1. Go to [console.cloud.google.com](https://console.cloud.google.com/) and
-   create a new project (or reuse one).
-2. In "APIs & Services" -> "Library", enable the **Google Drive API**.
-3. In "APIs & Services" -> "Credentials" -> "Create Credentials" ->
-   **Service account**. Give it any name (e.g. `pixlerpay-uploader`).
-4. Open the new service account -> "Keys" tab -> "Add Key" -> "Create new
-   key" -> JSON. This downloads a `.json` key file.
-5. Save that file as `data/gdrive-service-account.json` in this project
-   (already gitignored — never commit it).
-6. In Google Drive, create a folder for the dashboard data (e.g.
-   "PixlerPay Commission Data"). Right-click -> Share -> paste the service
-   account's email (looks like `pixlerpay-uploader@your-project.iam.gserviceaccount.com`,
-   found on the service account's details page) -> give it **Editor** access.
-7. Open that folder in Drive, copy the folder ID from the URL:
-   `https://drive.google.com/drive/folders/`**`THIS_PART_IS_THE_ID`**
-8. In `.env`, set:
-   ```
-   GOOGLE_SERVICE_ACCOUNT_KEY_FILE=./data/gdrive-service-account.json
-   GOOGLE_DRIVE_FOLDER_ID=<the folder ID from step 7>
-   ```
-9. Run `npm run upload-to-drive` (or `npm run all` to do everything in
-   sequence). The first run creates `commission-results.json` in that Drive
-   folder and prints its **file ID** — save that, the hosted dashboard needs
-   it to know which file to fetch.
+**Known limitation:** `npm run upload-to-drive` (via
+`scripts/upload-to-drive.js`) does not work — Google service accounts have
+no storage quota on personal Gmail accounts (only Google Workspace Shared
+Drives support this), so unattended local uploads aren't possible without
+a Workspace account. `data/gdrive-service-account.json` and the
+`GOOGLE_SERVICE_ACCOUNT_KEY_FILE/GOOGLE_DRIVE_FOLDER_ID` env vars are kept
+for reference but unused.
 
-Also create a **Drive API key** (separate from the service account) so the
-hosted dashboard page can read the file client-side:
+**Current workflow to refresh the live dashboard:**
+1. Run `npm run all` locally (downloads reports, calculates commission,
+   writes `website/commission-results.json`).
+2. Ask Claude to "push the latest results" — it has its own Google Drive
+   connection to this account and updates the same Drive file directly
+   (file: `commission-results.json` inside the "PixlerPay Commission Data"
+   Drive folder). The GitHub Pages dashboard picks up the change on its
+   next fetch/refresh — no redeploy needed.
 
-10. Same GCP project -> "Credentials" -> "Create Credentials" -> **API key**.
-11. Click the new key -> "Restrict key" -> under "API restrictions" choose
-    "Restrict key" and select only **Google Drive API**. Save.
-12. Give me this API key + the `commission-results.json` file ID from step 9
-    and I'll wire them into the hosted dashboard so it fetches live data on
-    every page load.
+If you want this fully unattended (no manual "push the latest results"
+step), the fix is switching from a service account to OAuth using your own
+Google account (one-time browser consent, refresh token stored locally) —
+ask Claude to set this up if needed later.
