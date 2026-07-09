@@ -61,31 +61,47 @@ update this file to match (or ask me to re-sync it).
 To run this automatically on a schedule, use Windows Task Scheduler to run:
 `npm run all` inside this folder, e.g. daily at 9am.
 
-## Google Drive sync + live dashboard (status: working, semi-automated)
+## Google Drive sync + live dashboard
 
 The hosted dashboard is live at **https://rishav414-blip.github.io/pixlerpay-commission/**.
-It fetches `commission-results.json` directly from a Google Drive file on
-every page load (and auto-refreshes every 5 minutes), using a
-Drive-API-restricted API key embedded in `docs/index.html`.
+It fetches `commission-results.json` (which includes a per-transaction log
+so the page can filter by any custom date range) directly from a Google
+Drive file on every load, auto-refreshing every 5 minutes.
 
-**Known limitation:** `npm run upload-to-drive` (via
-`scripts/upload-to-drive.js`) does not work — Google service accounts have
-no storage quota on personal Gmail accounts (only Google Workspace Shared
-Drives support this), so unattended local uploads aren't possible without
-a Workspace account. `data/gdrive-service-account.json` and the
-`GOOGLE_SERVICE_ACCOUNT_KEY_FILE/GOOGLE_DRIVE_FOLDER_ID` env vars are kept
-for reference but unused.
+**Auth note:** uploads use OAuth against your own Google account, not a
+service account — service accounts have no storage quota on personal
+Gmail accounts (only Google Workspace Shared Drives support that), so they
+can't create/update files here.
 
-**Current workflow to refresh the live dashboard:**
-1. Run `npm run all` locally (downloads reports, calculates commission,
-   writes `website/commission-results.json`).
-2. Ask Claude to "push the latest results" — it has its own Google Drive
-   connection to this account and updates the same Drive file directly
-   (file: `commission-results.json` inside the "PixlerPay Commission Data"
-   Drive folder). The GitHub Pages dashboard picks up the change on its
-   next fetch/refresh — no redeploy needed.
+### One-time OAuth setup
 
-If you want this fully unattended (no manual "push the latest results"
-step), the fix is switching from a service account to OAuth using your own
-Google account (one-time browser consent, refresh token stored locally) —
-ask Claude to set this up if needed later.
+1. Same GCP project as before (or a new one) → **APIs & Services →
+   Credentials → Create Credentials → OAuth client ID**.
+2. If prompted, configure the consent screen first: User type **External**,
+   fill in app name + your email as support/developer contact. Under
+   **Audience**, set Publishing status to **In production** (this avoids
+   Google's 7-day refresh-token expiry that applies to apps left in
+   "Testing" mode — no verification is required since we only request
+   Drive access for your own single account).
+3. Application type: **Desktop app**. Any name. Create → **Download JSON**.
+4. Save that file as `data/gdrive-oauth-client.json`.
+5. Run:
+   ```
+   npm run gdrive-oauth-setup
+   ```
+   This opens your browser for a one-time Google sign-in/consent, then
+   saves a refresh token to `data/gdrive-oauth-token.json` (gitignored).
+   After this, `npm run upload-to-drive` works unattended indefinitely.
+
+### Running
+
+```
+npm run upload-to-drive
+```
+Updates the existing `commission-results.json` Drive file in place (its ID
+is pinned in `.env` as `GOOGLE_DRIVE_RESULTS_FILE_ID`, so re-runs always
+update the same file rather than creating duplicates). Add it to `npm run
+all` for a single end-to-end command:
+```
+npm run download-report && npm run calculate && npm run upload-to-drive
+```

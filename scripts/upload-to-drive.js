@@ -4,21 +4,12 @@ import path from 'node:path';
 import { google } from 'googleapis';
 
 const {
-  GOOGLE_SERVICE_ACCOUNT_KEY_FILE,
   GOOGLE_DRIVE_FOLDER_ID,
+  GOOGLE_DRIVE_RESULTS_FILE_ID, // known file ID to update in place (avoids creating a duplicate)
 } = process.env;
 
-if (!GOOGLE_SERVICE_ACCOUNT_KEY_FILE || !GOOGLE_DRIVE_FOLDER_ID) {
-  console.error('Missing GOOGLE_SERVICE_ACCOUNT_KEY_FILE and/or GOOGLE_DRIVE_FOLDER_ID in .env.');
-  console.error('See README.md "Google Drive sync" section for one-time setup steps.');
-  process.exit(1);
-}
-
-if (!fs.existsSync(GOOGLE_SERVICE_ACCOUNT_KEY_FILE)) {
-  console.error(`Service account key file not found at: ${GOOGLE_SERVICE_ACCOUNT_KEY_FILE}`);
-  process.exit(1);
-}
-
+const OAUTH_CLIENT_FILE = './data/gdrive-oauth-client.json';
+const OAUTH_TOKEN_FILE = './data/gdrive-oauth-token.json';
 const RESULTS_FILE = path.join('./website', 'commission-results.json');
 
 if (!fs.existsSync(RESULTS_FILE)) {
@@ -26,14 +17,40 @@ if (!fs.existsSync(RESULTS_FILE)) {
   process.exit(1);
 }
 
-const auth = new google.auth.GoogleAuth({
-  keyFile: GOOGLE_SERVICE_ACCOUNT_KEY_FILE,
-  scopes: ['https://www.googleapis.com/auth/drive'],
+if (!fs.existsSync(OAUTH_CLIENT_FILE) || !fs.existsSync(OAUTH_TOKEN_FILE)) {
+  console.error('Google Drive OAuth is not set up yet.');
+  console.error('Run: npm run gdrive-oauth-setup');
+  console.error('See README.md "Google Drive sync" for the one-time Cloud Console step first.');
+  process.exit(1);
+}
+
+if (!GOOGLE_DRIVE_FOLDER_ID) {
+  console.error('Missing GOOGLE_DRIVE_FOLDER_ID in .env.');
+  process.exit(1);
+}
+
+const { installed } = JSON.parse(fs.readFileSync(OAUTH_CLIENT_FILE, 'utf-8'));
+const tokens = JSON.parse(fs.readFileSync(OAUTH_TOKEN_FILE, 'utf-8'));
+
+const oauth2Client = new google.auth.OAuth2(installed.client_id, installed.client_secret);
+oauth2Client.setCredentials(tokens);
+oauth2Client.on('tokens', (newTokens) => {
+  // Refresh tokens don't rotate on every use, but persist if Google issues a new one.
+  const merged = { ...tokens, ...newTokens };
+  fs.writeFileSync(OAUTH_TOKEN_FILE, JSON.stringify(merged, null, 2));
 });
 
-const drive = google.drive({ version: 'v3', auth });
+const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
 async function findExistingFile(name) {
+  if (GOOGLE_DRIVE_RESULTS_FILE_ID) {
+    try {
+      const res = await drive.files.get({ fileId: GOOGLE_DRIVE_RESULTS_FILE_ID, fields: 'id, name' });
+      return res.data;
+    } catch {
+      // Fall through to name-based lookup if the known ID no longer resolves.
+    }
+  }
   const res = await drive.files.list({
     q: `name = '${name}' and '${GOOGLE_DRIVE_FOLDER_ID}' in parents and trashed = false`,
     fields: 'files(id, name)',
@@ -59,12 +76,12 @@ async function uploadFile(localPath, driveName, mimeType) {
   const fileId = res.data.id;
   console.log(`Created new Drive file: ${driveName} (${fileId})`);
 
-  // Make it readable via link so the hosted dashboard can fetch it client-side.
   await drive.permissions.create({
     fileId,
     requestBody: { role: 'reader', type: 'anyone' },
   });
   console.log(`Set "anyone with link can view" on ${driveName}`);
+  console.log('NOTE: this is a NEW file ID — update GOOGLE_DRIVE_RESULTS_FILE_ID in .env and DRIVE_FILE_ID in docs/index.html.');
 
   return fileId;
 }
@@ -72,7 +89,6 @@ async function uploadFile(localPath, driveName, mimeType) {
 async function run() {
   const resultsFileId = await uploadFile(RESULTS_FILE, 'commission-results.json', 'application/json');
   console.log('\nDone. commission-results.json Drive file ID:', resultsFileId);
-  console.log('Use this file ID + a Drive API key in the hosted dashboard to fetch live data.');
 }
 
 run().catch((err) => {

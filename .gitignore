@@ -10,5 +10,7 @@ data/*.xlsx
 data/*.xls
 data/raw-reports/
 data/gdrive-service-account.json
+data/gdrive-oauth-client.json
+data/gdrive-oauth-token.json
 website/commission-results.json
 !data/.gitkeep
