@@ -60,6 +60,20 @@ function resolveColumns(rows) {
   return resolved;
 }
 
+// PixlerPay report dates look like "9/7/2026, 12:37:47 pm" (D/M/YYYY).
+function parseToISODate(value) {
+  if (!value) return null;
+  const s = String(value).trim();
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) {
+    const [, d, mo, y] = m;
+    return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+  const parsed = new Date(s);
+  if (!isNaN(parsed)) return parsed.toISOString().slice(0, 10);
+  return null;
+}
+
 function isSuccessful(statusValue) {
   if (!statusValue) return false;
   const s = String(statusValue).trim().toLowerCase();
@@ -94,6 +108,7 @@ function main() {
   let totalCommission = 0;
   let skippedReports = [];
   const sourceReports = [];
+  const transactions = [];
 
   for (const reportPath of reportPaths) {
     const fileAccountKey = accountNameFromFile(reportPath);
@@ -127,6 +142,8 @@ function main() {
         va: rate.va,
         onboardedPct: rate.onboardedPct,
         resellerPct: rate.resellerPct,
+        onboardedFlat100to200: rate.onboardedFlat100to200,
+        resellerFlat100to200: rate.resellerFlat100to200,
         marginPct: Math.round((rate.onboardedPct - rate.resellerPct) * 100) / 100,
         successfulTxns: 0,
         totalAmount: 0,
@@ -141,11 +158,15 @@ function main() {
       const result = calculateCommission(amount, rate);
       if (!result) continue;
 
+      const isoDate = cols.date ? parseToISODate(row[cols.date]) : null;
+
       totalSuccessfulTxns += 1;
       totalCommission += result.commission;
       agg.successfulTxns += 1;
       agg.totalAmount += amount;
       agg.totalCommission += result.commission;
+      // [va, isoDate, amount] — array form to keep the transaction log compact.
+      transactions.push([rate.va, isoDate, amount]);
     }
   }
 
@@ -158,6 +179,9 @@ function main() {
     clients: Array.from(perClient.values())
       .map((c) => ({ ...c, totalAmount: Math.round(c.totalAmount * 100) / 100, totalCommission: Math.round(c.totalCommission * 100) / 100 }))
       .sort((a, b) => b.totalCommission - a.totalCommission),
+    // Per-transaction log: [va, isoDate, amount]. Lets the dashboard
+    // recompute totals for any custom date range client-side.
+    transactions,
   };
 
   fs.mkdirSync(path.dirname(OUTPUT_JSON), { recursive: true });

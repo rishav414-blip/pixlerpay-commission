@@ -65,9 +65,12 @@
   .ledger-figure small { font-family: var(--sans); font-size: 13px; color: var(--text-muted); font-weight: 400; margin-left: 4px; }
 
   .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
-  .toolbar input[type="search"], .toolbar input[type="number"] { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 3px; padding: 9px 12px; font-size: 13.5px; font-family: var(--sans); }
+  .toolbar input[type="search"], .toolbar input[type="number"], .toolbar input[type="date"] { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 3px; padding: 9px 12px; font-size: 13.5px; font-family: var(--sans); }
   .toolbar input[type="search"] { flex: 1 1 240px; min-width: 180px; }
   .toolbar input[type="number"] { width: 130px; font-variant-numeric: tabular-nums; }
+  .toolbar input[type="date"] { font-variant-numeric: tabular-nums; color-scheme: dark; }
+  :root[data-theme="light"] .toolbar input[type="date"] { color-scheme: light; }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .toolbar input[type="date"] { color-scheme: light; } }
   .toolbar input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
   .toolbar label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
   .toolbar-count { margin-left: auto; font-size: 12.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
@@ -125,6 +128,12 @@
     <section class="ledger-strip" id="ledgerStrip"></section>
 
     <div class="toolbar">
+      <label>From
+        <input type="date" id="rangeFrom">
+      </label>
+      <label>To
+        <input type="date" id="rangeTo">
+      </label>
       <input type="search" id="searchInput" placeholder="Search client or VA…" aria-label="Search client or VA">
       <label>Min commission (₹)
         <input type="number" id="minCommission" placeholder="0" min="0" step="100">
@@ -177,6 +186,63 @@
   let sortDir = -1;
   let search = '';
   let minCommission = 0;
+  let rangeFrom = null; // 'YYYY-MM-DD' or null = no lower bound
+  let rangeTo = null;
+
+  // Commission = margin = Onboarded pricing - Reseller pricing. Mirrors
+  // scripts/calculate-commission.js so client-side date-range recompute
+  // matches the server-side snapshot exactly.
+  function calcCommission(amount, rate) {
+    if (rate.onboardedPct == null || rate.resellerPct == null) return 0;
+    if (amount >= 100 && amount <= 200 && rate.onboardedFlat100to200 != null && rate.resellerFlat100to200 != null) {
+      return rate.onboardedFlat100to200 - rate.resellerFlat100to200;
+    }
+    return (amount * (rate.onboardedPct - rate.resellerPct)) / 100;
+  }
+
+  // Recompute per-client + overall totals from the raw transaction log,
+  // filtered to [rangeFrom, rangeTo] (inclusive, ISO date strings).
+  function computeForRange() {
+    const rateByVa = new Map(DATA.clients.map((c) => [c.va, c]));
+    const perClient = new Map();
+    let totalSuccessfulTxns = 0;
+    let totalCommission = 0;
+    let totalVolume = 0;
+
+    for (const [va, isoDate, amount] of DATA.transactions) {
+      if (rangeFrom && (!isoDate || isoDate < rangeFrom)) continue;
+      if (rangeTo && (!isoDate || isoDate > rangeTo)) continue;
+      const rate = rateByVa.get(va);
+      if (!rate) continue;
+
+      const commission = calcCommission(amount, rate);
+      totalSuccessfulTxns += 1;
+      totalCommission += commission;
+      totalVolume += amount;
+
+      if (!perClient.has(va)) {
+        perClient.set(va, {
+          clientName: rate.clientName, va, onboardedPct: rate.onboardedPct, resellerPct: rate.resellerPct,
+          marginPct: rate.marginPct, successfulTxns: 0, totalAmount: 0, totalCommission: 0,
+        });
+      }
+      const agg = perClient.get(va);
+      agg.successfulTxns += 1;
+      agg.totalAmount += amount;
+      agg.totalCommission += commission;
+    }
+
+    return {
+      totalSuccessfulTxns,
+      totalCommission: Math.round(totalCommission * 100) / 100,
+      totalVolume,
+      clients: Array.from(perClient.values()).map((c) => ({
+        ...c,
+        totalAmount: Math.round(c.totalAmount * 100) / 100,
+        totalCommission: Math.round(c.totalCommission * 100) / 100,
+      })),
+    };
+  }
 
   const setupPanel = document.getElementById('setupPanel');
   const app = document.getElementById('app');
@@ -202,9 +268,11 @@
       const res = await fetch(driveUrl, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Drive fetch failed: ${res.status} ${res.statusText}`);
       const json = await res.json();
+      const isFirstLoad = !DATA;
       DATA = json;
       setupPanel.hidden = true;
       app.hidden = false;
+      if (isFirstLoad) initDateRange();
       renderAll();
       setLiveState('fresh', 'Live · ' + new Date().toLocaleTimeString('en-IN'));
     } catch (err) {
@@ -219,15 +287,36 @@
     }
   }
 
+  function initDateRange() {
+    let min = null, max = null;
+    for (const [, isoDate] of DATA.transactions) {
+      if (!isoDate) continue;
+      if (!min || isoDate < min) min = isoDate;
+      if (!max || isoDate > max) max = isoDate;
+    }
+    rangeFrom = min;
+    rangeTo = max;
+    const fromInput = document.getElementById('rangeFrom');
+    const toInput = document.getElementById('rangeTo');
+    fromInput.min = min; fromInput.max = max; fromInput.value = min;
+    toInput.min = min; toInput.max = max; toInput.value = max;
+  }
+
   function renderAll() {
+    const periodLine = document.getElementById('periodLine');
+    if (rangeFrom && rangeTo) {
+      periodLine.textContent = rangeFrom === rangeTo ? rangeFrom : `${rangeFrom} → ${rangeTo}`;
+    }
+
+    const range = computeForRange();
+
     metaLine.textContent = `${DATA.sourceReports.length} merchant accounts · generated ${new Date(DATA.generatedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}`;
 
-    const totalVolume = DATA.clients.reduce((s, c) => s + c.totalAmount, 0);
     document.getElementById('ledgerStrip').innerHTML = `
-      <div class="ledger-cell"><div class="ledger-label">Successful Transactions</div><div class="ledger-figure">${DATA.totalSuccessfulTxns.toLocaleString('en-IN')}</div></div>
-      <div class="ledger-cell"><div class="ledger-label">Total Volume</div><div class="ledger-figure">${fmtINR(totalVolume)}</div></div>
-      <div class="ledger-cell"><div class="ledger-label">Total Commission (Margin)</div><div class="ledger-figure accent">${fmtINR2(DATA.totalCommission)}</div></div>
-      <div class="ledger-cell"><div class="ledger-label">Active Clients</div><div class="ledger-figure">${DATA.clients.length}<small>of ${DATA.sourceReports.length}</small></div></div>
+      <div class="ledger-cell"><div class="ledger-label">Successful Transactions</div><div class="ledger-figure">${range.totalSuccessfulTxns.toLocaleString('en-IN')}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Total Volume</div><div class="ledger-figure">${fmtINR(range.totalVolume)}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Total Commission (Margin)</div><div class="ledger-figure accent">${fmtINR2(range.totalCommission)}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Active Clients</div><div class="ledger-figure">${range.clients.length}<small>of ${DATA.sourceReports.length}</small></div></div>
     `;
 
     if (DATA.idleClients && DATA.idleClients.length) {
@@ -237,15 +326,16 @@
       document.getElementById('idleNote').hidden = true;
     }
 
-    renderTable();
+    renderTable(range);
   }
 
-  function renderTable() {
+  function renderTable(range) {
     const tbody = document.getElementById('tbody');
     const rowCount = document.getElementById('rowCount');
     if (!DATA) return;
+    range = range || computeForRange();
 
-    let rows = DATA.clients.filter((c) => {
+    let rows = range.clients.filter((c) => {
       const hay = (c.clientName + ' ' + c.va).toLowerCase();
       if (search && !hay.includes(search.toLowerCase())) return false;
       if (c.totalCommission < minCommission) return false;
@@ -266,7 +356,7 @@
         </tr>
       `).join('');
     }
-    rowCount.textContent = `${rows.length} of ${DATA.clients.length} clients`;
+    rowCount.textContent = `${rows.length} of ${range.clients.length} clients`;
 
     document.querySelectorAll('thead th button').forEach((btn) => {
       const active = btn.dataset.key === sortKey;
@@ -277,11 +367,14 @@
 
   document.getElementById('searchInput').addEventListener('input', (e) => { search = e.target.value; renderTable(); });
   document.getElementById('minCommission').addEventListener('input', (e) => { minCommission = Number(e.target.value) || 0; renderTable(); });
+  document.getElementById('rangeFrom').addEventListener('change', (e) => { rangeFrom = e.target.value || null; renderAll(); });
+  document.getElementById('rangeTo').addEventListener('change', (e) => { rangeTo = e.target.value || null; renderAll(); });
   document.getElementById('resetBtn').addEventListener('click', () => {
     search = ''; minCommission = 0;
     document.getElementById('searchInput').value = '';
     document.getElementById('minCommission').value = '';
-    renderTable();
+    initDateRange();
+    renderAll();
   });
   document.getElementById('refreshBtn').addEventListener('click', fetchData);
   document.querySelectorAll('thead th button').forEach((btn) => {

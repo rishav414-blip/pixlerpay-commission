@@ -10,4 +10,5 @@ data/*.xlsx
 data/*.xls
 data/raw-reports/
 data/gdrive-service-account.json
+website/commission-results.json
 !data/.gitkeep
