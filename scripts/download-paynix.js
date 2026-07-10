@@ -22,6 +22,11 @@ const OUTPUT_JSON = path.join('./website', 'paynix-results.json');
 
 const headless = PAYNIX_HEADFUL !== 'true';
 
+// Gateway throttling messages (e.g. "Please wait at least 2 minutes between
+// transactions") are retry-rate-limit noise, not genuine payout failures —
+// exclude them from the failed-payout report and new-failure alerting.
+const RATE_LIMIT_REASON_RE = /please wait at least \d+ minutes?/i;
+
 // Parses "₹1,74,963.70" -> 174963.70
 function parseINR(s) {
   if (!s) return 0;
@@ -90,10 +95,13 @@ async function scrapeFailedPayouts(page) {
     const timeMatch = text.match(/(\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}\s*[ap]m)/i);
     const merchantLines = text.split('\n').map((s) => s.trim()).filter(Boolean);
 
+    const reason = reasonMatch ? reasonMatch[reasonMatch.length - 1].trim() : null;
+    if (reason && RATE_LIMIT_REASON_RE.test(reason)) continue; // not a real failure
+
     failed.push({
       transactionId: idMatch ? idMatch[0] : null,
       amount: amountMatch ? parseINR(amountMatch[0]) : null,
-      reason: reasonMatch ? reasonMatch[reasonMatch.length - 1].trim() : null,
+      reason,
       createdAt: timeMatch ? timeMatch[1] : null,
       raw: merchantLines.slice(0, 6).join(' | '),
     });

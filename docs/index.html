@@ -137,9 +137,13 @@
       <h1 class="masthead-title" id="pageTitle">PixlerPay Commission Ledger</h1>
       <div class="masthead-sub" id="metaLine">Connecting to Google Drive…</div>
     </div>
-    <div class="masthead-period">
+    <div class="masthead-period" id="pixlerMasthead">
       <span class="live-badge"><span class="live-dot" id="liveDot"></span><span id="liveLabel">Connecting</span></span>
       <strong id="periodLine">Last 30 days</strong>
+    </div>
+    <div class="masthead-period" id="paynixMasthead" hidden>
+      <span class="live-badge"><span class="live-dot" id="paynixLiveDot"></span><span id="paynixLiveLabel">Connecting</span></span>
+      <strong id="paynixPeriodLine">Today + Last 30 days (rolling)</strong>
     </div>
   </header>
 
@@ -232,7 +236,6 @@
               <th>Merchant ID</th>
               <th class="num">Wallet Balance (₹)</th>
               <th class="num">Added (₹)</th>
-              <th class="num">Deducted (₹)</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -497,6 +500,14 @@
   let PAYNIX_DATA = null;
   let paynixLoaded = false;
 
+  const paynixLiveDot = document.getElementById('paynixLiveDot');
+  const paynixLiveLabel = document.getElementById('paynixLiveLabel');
+
+  function setPaynixLiveState(state, label) {
+    paynixLiveDot.className = 'live-dot ' + state;
+    paynixLiveLabel.textContent = label;
+  }
+
   async function fetchPaynixData() {
     const setupPanel2 = document.getElementById('paynixSetupPanel');
     const app2 = document.getElementById('paynixApp');
@@ -507,8 +518,10 @@
       setupPanel2.hidden = true;
       app2.hidden = false;
       renderPaynix();
+      setPaynixLiveState('fresh', 'Live · ' + new Date().toLocaleTimeString('en-IN'));
     } catch (err) {
       console.error(err);
+      setPaynixLiveState('error', 'Connection failed');
       if (!PAYNIX_DATA) {
         setupPanel2.hidden = false;
         document.getElementById('paynixSetupError').textContent = err.message;
@@ -552,11 +565,8 @@
     const merchants = [...d.merchants].sort((a, b) => b.wallet - a.wallet);
     merchantTbody.innerHTML = merchants.map((m) => {
       const delta = changeByMerchant.get(m.merchantId);
-      const addedCell = delta != null && delta > 0
-        ? `<span style="color: var(--success)">+${fmtINR2(delta)}</span>`
-        : '<span class="client-va">—</span>';
-      const deductedCell = delta != null && delta < 0
-        ? `<span style="color: var(--danger)">${fmtINR2(delta)}</span>`
+      const addedCell = delta != null
+        ? `<span style="color: ${delta >= 0 ? 'var(--success)' : 'var(--danger)'}">${delta > 0 ? '+' : ''}${fmtINR2(delta)}</span>`
         : '<span class="client-va">—</span>';
       return `
       <tr>
@@ -564,7 +574,6 @@
         <td class="client-va">${m.merchantId}</td>
         <td class="num commission-cell">${fmtINR2(m.wallet)}</td>
         <td class="num">${addedCell}</td>
-        <td class="num">${deductedCell}</td>
         <td><span class="status-pill ${m.status === 'Active' ? 'active' : 'other'}">${m.status}</span></td>
       </tr>
     `;
@@ -599,6 +608,8 @@
     tabPaynix.classList.toggle('active', !isPixler);
     pixlerPanel.hidden = !isPixler;
     paynixPanel.hidden = isPixler;
+    document.getElementById('pixlerMasthead').hidden = !isPixler;
+    document.getElementById('paynixMasthead').hidden = isPixler;
     pageTitle.textContent = isPixler ? 'PixlerPay Commission Ledger' : 'Paynix Commission Ledger';
   }
 
