@@ -103,12 +103,27 @@
   .setup-panel .err { color: var(--danger); margin-top: 10px; font-size: 12.5px; }
 
   footer { margin-top: 28px; font-size: 11.5px; color: var(--text-muted); text-align: center; }
+
+  .tabbar { display: flex; gap: 4px; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
+  .tab-btn {
+    background: none; border: none; font-family: var(--sans); font-size: 13.5px; font-weight: 500;
+    color: var(--text-muted); padding: 10px 4px; cursor: pointer; position: relative; top: 1px;
+    border-bottom: 2px solid transparent;
+  }
+  .tab-btn + .tab-btn { margin-left: 18px; }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-btn:hover:not(.active) { color: var(--text); }
+  .tab-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .placeholder-panel { background: var(--surface); border: 1px dashed var(--border); border-radius: 3px; padding: 40px 24px; text-align: center; color: var(--text-muted); font-size: 13.5px; line-height: 1.7; }
+  .placeholder-panel h2 { font-family: var(--serif); font-size: 19px; color: var(--text); margin: 0 0 10px; }
+  .placeholder-panel ul { text-align: left; max-width: 480px; margin: 16px auto 0; padding-left: 20px; }
 </style>
 
 <div class="wrap">
   <header class="masthead">
     <div>
-      <h1 class="masthead-title">PixlerPay Commission Ledger</h1>
+      <h1 class="masthead-title" id="pageTitle">PixlerPay Commission Ledger</h1>
       <div class="masthead-sub" id="metaLine">Connecting to Google Drive…</div>
     </div>
     <div class="masthead-period">
@@ -117,6 +132,12 @@
     </div>
   </header>
 
+  <nav class="tabbar">
+    <button class="tab-btn active" id="tabPixler" type="button">PixlerPay</button>
+    <button class="tab-btn" id="tabPaynix" type="button">Paynix</button>
+  </nav>
+
+  <div id="pixlerPanel">
   <div id="setupPanel" class="setup-panel" hidden>
     <h2>Not connected yet</h2>
     <p>This page reads live data from Google Drive but hasn't been configured with a file ID and API key yet.</p>
@@ -162,6 +183,23 @@
       <strong>No activity</strong>
       <span id="idleNames"></span>
       <span>&nbsp;had zero successful transactions in this window.</span>
+    </div>
+  </div>
+  </div>
+
+  <div id="paynixPanel" hidden>
+    <div class="placeholder-panel">
+      <h2>Paynix — setup in progress</h2>
+      <p>This tab will show Paynix commission, payout figures, merchant wallet
+      balances (with change tracking), and failed-transaction alerts, once
+      the reseller portal automation is wired up.</p>
+      <ul>
+        <li>Login automation for reseller.paynix.co.in</li>
+        <li>Commission &amp; payout calculation (rate structure to be confirmed)</li>
+        <li>Merchant wallet balance snapshots + delta tracking</li>
+        <li>Failed-transaction detection</li>
+        <li>Telegram alerts for wallet changes and failed transactions</li>
+      </ul>
     </div>
   </div>
 
@@ -387,6 +425,25 @@
 
   fetchData();
   setInterval(fetchData, REFRESH_INTERVAL_MS);
+
+  // ---- Tabs ----------------------------------------------------------
+  const tabPixler = document.getElementById('tabPixler');
+  const tabPaynix = document.getElementById('tabPaynix');
+  const pixlerPanel = document.getElementById('pixlerPanel');
+  const paynixPanel = document.getElementById('paynixPanel');
+  const pageTitle = document.getElementById('pageTitle');
+
+  function showTab(tab) {
+    const isPixler = tab === 'pixler';
+    tabPixler.classList.toggle('active', isPixler);
+    tabPaynix.classList.toggle('active', !isPixler);
+    pixlerPanel.hidden = !isPixler;
+    paynixPanel.hidden = isPixler;
+    pageTitle.textContent = isPixler ? 'PixlerPay Commission Ledger' : 'Paynix Commission Ledger';
+  }
+
+  tabPixler.addEventListener('click', () => showTab('pixler'));
+  tabPaynix.addEventListener('click', () => showTab('paynix'));
 </script>
 </body>
 </html>
