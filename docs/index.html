@@ -44,6 +44,7 @@
   header.masthead { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 16px; padding-bottom: 20px; border-bottom: 1px solid var(--border); margin-bottom: 28px; }
   .masthead-title { font-family: var(--serif); font-size: clamp(26px, 3.4vw, 34px); font-weight: 500; letter-spacing: 0.01em; text-wrap: balance; margin: 0; }
   .masthead-sub { font-size: 13px; color: var(--text-muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .stale-badge { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 3px; font-size: 11px; font-weight: 600; background: rgba(166, 95, 34, 0.14); color: var(--warn); }
   .masthead-period { text-align: right; font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
   .masthead-period strong { display: block; font-family: var(--serif); font-size: 15px; color: var(--accent); text-transform: none; letter-spacing: 0; margin-top: 2px; }
 
@@ -209,6 +210,7 @@
       <div class="toolbar">
         <button class="btn-refresh" id="paynixRefreshBtn" type="button">↻ Refresh</button>
         <span class="toolbar-count" id="paynixRefreshNote">Re-fetches the latest synced snapshot from Drive</span>
+        <span class="toolbar-count" id="paynixMetaLine"></span>
       </div>
 
       <section class="ledger-strip" id="paynixLedgerStrip"></section>
@@ -268,6 +270,16 @@
   const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // auto-refresh every 5 minutes
 
   const driveUrl = `https://www.googleapis.com/drive/v3/files/${DRIVE_FILE_ID}?alt=media&key=${DRIVE_API_KEY}`;
+
+  const STALE_THRESHOLD_MS = 20 * 60 * 1000; // 20 minutes
+  function staleBadge(isoString) {
+    if (!isoString) return '';
+    const ageMs = Date.now() - new Date(isoString).getTime();
+    if (ageMs < STALE_THRESHOLD_MS) return '';
+    const mins = Math.round(ageMs / 60000);
+    const ageLabel = mins < 60 ? `${mins}m old` : `${Math.round(mins / 60)}h old`;
+    return `<span class="stale-badge">⏱ stale · ${ageLabel}</span>`;
+  }
 
   function fmtINR(n) { return '₹' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 0 }); }
   function fmtINR2(n) { return '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -401,7 +413,7 @@
 
     const range = computeForRange();
 
-    metaLine.textContent = `${DATA.sourceReports.length} merchant accounts · generated ${new Date(DATA.generatedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}`;
+    metaLine.innerHTML = `${DATA.sourceReports.length} merchant accounts · generated ${new Date(DATA.generatedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}${staleBadge(DATA.generatedAt)}`;
 
     document.getElementById('ledgerStrip').innerHTML = `
       <div class="ledger-cell"><div class="ledger-label">Successful Transactions</div><div class="ledger-figure">${range.totalSuccessfulTxns.toLocaleString('en-IN')}</div></div>
@@ -507,6 +519,9 @@
 
   function renderPaynix() {
     const d = PAYNIX_DATA;
+    document.getElementById('paynixMetaLine').innerHTML = d.scrapedAt
+      ? 'generated ' + new Date(d.scrapedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) + staleBadge(d.scrapedAt)
+      : '';
     document.getElementById('paynixLedgerStrip').innerHTML = `
       <div class="ledger-cell"><div class="ledger-label">Active Merchants</div><div class="ledger-figure">${d.summary.activeMerchants ?? '-'}</div></div>
       <div class="ledger-cell"><div class="ledger-label">30-Day Payout Volume</div><div class="ledger-figure">${fmtINR(d.summary.last30Days.successVolume)}</div></div>

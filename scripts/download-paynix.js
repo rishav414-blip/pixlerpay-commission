@@ -154,7 +154,10 @@ function computeWalletChanges(previous, current) {
 }
 
 function computeNewFailedPayouts(previous, current) {
-  if (!previous) return current;
+  // No baseline yet (first-ever run) -> nothing is "new", it's just the
+  // starting snapshot. Flagging the whole existing list as new would be a
+  // false alarm.
+  if (!previous) return [];
   const prevIds = new Set(previous.failedPayouts.map((f) => f.transactionId));
   return current.filter((f) => f.transactionId && !prevIds.has(f.transactionId));
 }
