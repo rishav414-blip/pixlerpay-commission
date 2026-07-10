@@ -6,14 +6,16 @@ import { google } from 'googleapis';
 const {
   GOOGLE_DRIVE_FOLDER_ID,
   GOOGLE_DRIVE_RESULTS_FILE_ID, // known file ID to update in place (avoids creating a duplicate)
+  GOOGLE_DRIVE_PAYNIX_FILE_ID,
 } = process.env;
 
 const OAUTH_CLIENT_FILE = './data/gdrive-oauth-client.json';
 const OAUTH_TOKEN_FILE = './data/gdrive-oauth-token.json';
 const RESULTS_FILE = path.join('./website', 'commission-results.json');
+const PAYNIX_RESULTS_FILE = path.join('./website', 'paynix-results.json');
 
-if (!fs.existsSync(RESULTS_FILE)) {
-  console.error(`Missing ${RESULTS_FILE}. Run "npm run calculate" first.`);
+if (!fs.existsSync(RESULTS_FILE) && !fs.existsSync(PAYNIX_RESULTS_FILE)) {
+  console.error(`Missing both ${RESULTS_FILE} and ${PAYNIX_RESULTS_FILE}. Run "npm run calculate" and/or "npm run download-paynix" first.`);
   process.exit(1);
 }
 
@@ -42,10 +44,10 @@ oauth2Client.on('tokens', (newTokens) => {
 
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
-async function findExistingFile(name) {
-  if (GOOGLE_DRIVE_RESULTS_FILE_ID) {
+async function findExistingFile(name, knownFileId) {
+  if (knownFileId) {
     try {
-      const res = await drive.files.get({ fileId: GOOGLE_DRIVE_RESULTS_FILE_ID, fields: 'id, name' });
+      const res = await drive.files.get({ fileId: knownFileId, fields: 'id, name' });
       return res.data;
     } catch {
       // Fall through to name-based lookup if the known ID no longer resolves.
@@ -58,9 +60,9 @@ async function findExistingFile(name) {
   return res.data.files?.[0] || null;
 }
 
-async function uploadFile(localPath, driveName, mimeType) {
+async function uploadFile(localPath, driveName, mimeType, knownFileId) {
   const media = { mimeType, body: fs.createReadStream(localPath) };
-  const existing = await findExistingFile(driveName);
+  const existing = await findExistingFile(driveName, knownFileId);
 
   if (existing) {
     await drive.files.update({ fileId: existing.id, media });
@@ -87,8 +89,15 @@ async function uploadFile(localPath, driveName, mimeType) {
 }
 
 async function run() {
-  const resultsFileId = await uploadFile(RESULTS_FILE, 'commission-results.json', 'application/json');
-  console.log('\nDone. commission-results.json Drive file ID:', resultsFileId);
+  if (fs.existsSync(RESULTS_FILE)) {
+    const resultsFileId = await uploadFile(RESULTS_FILE, 'commission-results.json', 'application/json', GOOGLE_DRIVE_RESULTS_FILE_ID);
+    console.log('commission-results.json Drive file ID:', resultsFileId);
+  }
+  if (fs.existsSync(PAYNIX_RESULTS_FILE)) {
+    const paynixFileId = await uploadFile(PAYNIX_RESULTS_FILE, 'paynix-results.json', 'application/json', GOOGLE_DRIVE_PAYNIX_FILE_ID);
+    console.log('paynix-results.json Drive file ID:', paynixFileId);
+  }
+  console.log('\nDone.');
 }
 
 run().catch((err) => {

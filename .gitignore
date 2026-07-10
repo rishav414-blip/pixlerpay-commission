@@ -13,4 +13,7 @@ data/gdrive-service-account.json
 data/gdrive-oauth-client.json
 data/gdrive-oauth-token.json
 website/commission-results.json
+website/paynix-results.json
+data/paynix-snapshot.json
+data/paynix-snapshot-previous.json
 !data/.gitkeep

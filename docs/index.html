@@ -118,6 +118,16 @@
   .placeholder-panel { background: var(--surface); border: 1px dashed var(--border); border-radius: 3px; padding: 40px 24px; text-align: center; color: var(--text-muted); font-size: 13.5px; line-height: 1.7; }
   .placeholder-panel h2 { font-family: var(--serif); font-size: 19px; color: var(--text); margin: 0 0 10px; }
   .placeholder-panel ul { text-align: left; max-width: 480px; margin: 16px auto 0; padding-left: 20px; }
+
+  .section-heading { font-family: var(--serif); font-size: 17px; font-weight: 500; margin: 28px 0 12px; }
+  .alert-note { display: flex; gap: 10px; align-items: flex-start; padding: 12px 16px; border-radius: 3px; font-size: 12.5px; line-height: 1.6; margin-bottom: 14px; border: 1px solid; }
+  #paynixFailedAlert { background: rgba(207, 97, 97, 0.1); border-color: var(--danger); color: var(--text); }
+  #paynixFailedAlert strong { color: var(--danger); white-space: nowrap; }
+  #paynixWalletAlert { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+  #paynixWalletAlert strong { color: var(--accent); white-space: nowrap; }
+  .status-pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 20px; }
+  .status-pill.active { background: var(--success-soft); color: var(--success); }
+  .status-pill.other { background: var(--surface-2); color: var(--text-muted); }
 </style>
 
 <div class="wrap">
@@ -188,18 +198,53 @@
   </div>
 
   <div id="paynixPanel" hidden>
-    <div class="placeholder-panel">
-      <h2>Paynix — setup in progress</h2>
-      <p>This tab will show Paynix commission, payout figures, merchant wallet
-      balances (with change tracking), and failed-transaction alerts, once
-      the reseller portal automation is wired up.</p>
-      <ul>
-        <li>Login automation for reseller.paynix.co.in</li>
-        <li>Commission &amp; payout calculation (rate structure to be confirmed)</li>
-        <li>Merchant wallet balance snapshots + delta tracking</li>
-        <li>Failed-transaction detection</li>
-        <li>Telegram alerts for wallet changes and failed transactions</li>
-      </ul>
+    <div id="paynixSetupPanel" class="setup-panel" hidden>
+      <h2>Not connected yet</h2>
+      <p>Waiting for a Paynix data snapshot. Run <code>npm run download-paynix</code>
+      then <code>npm run upload-to-drive</code> locally.</p>
+      <p class="err" id="paynixSetupError"></p>
+    </div>
+
+    <div id="paynixApp" hidden>
+      <section class="ledger-strip" id="paynixLedgerStrip"></section>
+
+      <div class="alert-note" id="paynixFailedAlert" hidden>
+        <strong>⚠ New failed payouts</strong>
+        <span id="paynixFailedList"></span>
+      </div>
+      <div class="alert-note" id="paynixWalletAlert" hidden>
+        <strong>↕ Wallet changes</strong>
+        <span id="paynixWalletList"></span>
+      </div>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Merchant</th>
+              <th>Merchant ID</th>
+              <th class="num">Wallet Balance (₹)</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="paynixMerchantTbody"></tbody>
+        </table>
+      </div>
+
+      <h2 class="section-heading">Recent Failed Payouts</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Transaction</th>
+              <th>Merchant</th>
+              <th class="num">Amount (₹)</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody id="paynixFailedTbody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -426,6 +471,86 @@
   fetchData();
   setInterval(fetchData, REFRESH_INTERVAL_MS);
 
+  // ---- Paynix tab ------------------------------------------------------
+  const PAYNIX_FILE_ID = '1QNBL16ZKs0IJ2TptujnazLSk29SGxVEy';
+  const paynixUrl = `https://www.googleapis.com/drive/v3/files/${PAYNIX_FILE_ID}?alt=media&key=${DRIVE_API_KEY}`;
+  let PAYNIX_DATA = null;
+  let paynixLoaded = false;
+
+  async function fetchPaynixData() {
+    const setupPanel2 = document.getElementById('paynixSetupPanel');
+    const app2 = document.getElementById('paynixApp');
+    try {
+      const res = await fetch(paynixUrl, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Drive fetch failed: ${res.status} ${res.statusText}`);
+      PAYNIX_DATA = await res.json();
+      setupPanel2.hidden = true;
+      app2.hidden = false;
+      renderPaynix();
+    } catch (err) {
+      console.error(err);
+      if (!PAYNIX_DATA) {
+        setupPanel2.hidden = false;
+        document.getElementById('paynixSetupError').textContent = err.message;
+        app2.hidden = true;
+      }
+    }
+  }
+
+  function renderPaynix() {
+    const d = PAYNIX_DATA;
+    document.getElementById('paynixLedgerStrip').innerHTML = `
+      <div class="ledger-cell"><div class="ledger-label">Active Merchants</div><div class="ledger-figure">${d.summary.activeMerchants ?? '-'}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">30-Day Payout Volume</div><div class="ledger-figure">${fmtINR(d.summary.last30Days.successVolume)}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">30-Day Commission</div><div class="ledger-figure accent">${fmtINR2(d.summary.last30Days.commission)}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Today's Commission</div><div class="ledger-figure">${fmtINR2(d.summary.today.commission)}</div></div>
+    `;
+
+    const failedAlert = document.getElementById('paynixFailedAlert');
+    if (d.newFailedPayouts && d.newFailedPayouts.length > 0) {
+      failedAlert.hidden = false;
+      document.getElementById('paynixFailedList').textContent =
+        `${d.newFailedPayouts.length} new failed payout(s) since last check: ` +
+        d.newFailedPayouts.slice(0, 5).map((f) => f.transactionId).join(', ');
+    } else {
+      failedAlert.hidden = true;
+    }
+
+    const walletAlert = document.getElementById('paynixWalletAlert');
+    if (d.walletChanges && d.walletChanges.length > 0) {
+      walletAlert.hidden = false;
+      document.getElementById('paynixWalletList').textContent =
+        d.walletChanges.map((c) => `${c.merchantName}: ${c.delta > 0 ? '+' : ''}${fmtINR2(c.delta)}`).join(' · ');
+    } else {
+      walletAlert.hidden = true;
+    }
+
+    const merchantTbody = document.getElementById('paynixMerchantTbody');
+    const merchants = [...d.merchants].sort((a, b) => b.wallet - a.wallet);
+    merchantTbody.innerHTML = merchants.map((m) => `
+      <tr>
+        <td class="client-name">${m.merchantName}</td>
+        <td class="client-va">${m.merchantId}</td>
+        <td class="num commission-cell">${fmtINR2(m.wallet)}</td>
+        <td><span class="status-pill ${m.status === 'Active' ? 'active' : 'other'}">${m.status}</span></td>
+      </tr>
+    `).join('');
+
+    const failedTbody = document.getElementById('paynixFailedTbody');
+    if (!d.failedPayouts || d.failedPayouts.length === 0) {
+      failedTbody.innerHTML = '<tr class="empty-row"><td colspan="4">No failed payouts in the latest snapshot.</td></tr>';
+    } else {
+      failedTbody.innerHTML = d.failedPayouts.map((f) => `
+        <tr>
+          <td>${f.transactionId || '-'}</td>
+          <td>${(f.raw || '').split(' | ')[4] || '-'}</td>
+          <td class="num">${f.amount != null ? fmtINR(f.amount) : '-'}</td>
+          <td>${f.reason || '-'}</td>
+        </tr>
+      `).join('');
+    }
+  }
+
   // ---- Tabs ----------------------------------------------------------
   const tabPixler = document.getElementById('tabPixler');
   const tabPaynix = document.getElementById('tabPaynix');
@@ -443,7 +568,14 @@
   }
 
   tabPixler.addEventListener('click', () => showTab('pixler'));
-  tabPaynix.addEventListener('click', () => showTab('paynix'));
+  tabPaynix.addEventListener('click', () => {
+    showTab('paynix');
+    if (!paynixLoaded) {
+      paynixLoaded = true;
+      fetchPaynixData();
+      setInterval(fetchPaynixData, REFRESH_INTERVAL_MS);
+    }
+  });
 </script>
 </body>
 </html>
