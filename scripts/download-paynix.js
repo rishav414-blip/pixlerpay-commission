@@ -86,12 +86,15 @@ async function scrapeFailedPayouts(page) {
     const idMatch = text.match(/PAY_OUT_[A-Z0-9]+/);
     const amountMatch = text.match(/₹[\d,]+(\.\d+)?/);
     const reasonMatch = text.match(/Gateway[^\n]+/) || text.match(/Failed\s*\n\s*([^\n]+)/);
+    // "10/07/26, 10:59 am" style timestamp — the row's "Created" column.
+    const timeMatch = text.match(/(\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}\s*[ap]m)/i);
     const merchantLines = text.split('\n').map((s) => s.trim()).filter(Boolean);
 
     failed.push({
       transactionId: idMatch ? idMatch[0] : null,
       amount: amountMatch ? parseINR(amountMatch[0]) : null,
       reason: reasonMatch ? reasonMatch[reasonMatch.length - 1].trim() : null,
+      createdAt: timeMatch ? timeMatch[1] : null,
       raw: merchantLines.slice(0, 6).join(' | '),
     });
   }
@@ -109,17 +112,18 @@ async function scrapeDashboardSummary(page) {
   }
 
   return {
+    // Header badge "COMMISSION ₹1,74,963.70" — lifetime commission balance,
+    // distinct from the "TODAY COMMISSION" / "30-DAY COMMISSION" rolling stats.
+    lifetimeCommission: parseINR(num(/\bCOMMISSION\s*\n+\s*(₹[\d,.]+)/)),
     activeMerchants: Number(num(/ACTIVE MERCHANTS\s*\n+\s*(\d+)/)) || null,
     today: {
       payoutTxns: Number(num(/TODAY PAYOUT TXNS[\s\S]*?Live\s*\n+\s*(\d+)/)) || null,
       successVolume: parseINR(num(/PAYOUT\s*\n+Today[\s\S]*?SUCCESS VOLUME\s*\n+\s*(₹[\d,.]+)/)),
-      commission: parseINR(num(/TODAY COMMISSION\s*\n+\s*(₹[\d,.]+)/)),
       fees: parseINR(num(/TODAY FEES\s*\n+\s*(₹[\d,.]+)/)),
     },
     last30Days: {
       payoutTxns: Number(num(/PAYOUT\s*\n+Last 30 Days\s*\n+\s*(\d+)/)) || null,
       successVolume: parseINR(num(/PAYOUT\s*\n+Last 30 Days[\s\S]*?SUCCESS VOLUME\s*\n+\s*(₹[\d,.]+)/)),
-      commission: parseINR(num(/30-DAY COMMISSION\s*\n+\s*(₹[\d,.]+)/)),
       fees: parseINR(num(/30-DAY FEES\s*\n+\s*(₹[\d,.]+)/)),
     },
   };
@@ -204,7 +208,7 @@ async function run() {
   fs.writeFileSync(OUTPUT_JSON, JSON.stringify(snapshot, null, 2));
 
   console.log(`\nSnapshot saved to ${SNAPSHOT_FILE} and ${OUTPUT_JSON}`);
-  console.log(`Active merchants: ${summary.activeMerchants}, 30-day commission: Rs ${summary.last30Days.commission}`);
+  console.log(`Active merchants: ${summary.activeMerchants}, lifetime commission: Rs ${summary.lifetimeCommission}`);
   console.log(`Failed payouts captured: ${failedPayouts.length} (${newFailedPayouts.length} new since last run)`);
   console.log(`Wallet changes since last run: ${walletChanges.length}`);
 }
