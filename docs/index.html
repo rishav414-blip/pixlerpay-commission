@@ -229,7 +229,8 @@
               <th>Merchant</th>
               <th>Merchant ID</th>
               <th class="num">Wallet Balance (₹)</th>
-              <th class="num">Latest Change (₹)</th>
+              <th class="num">Added (₹)</th>
+              <th class="num">Deducted (₹)</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -536,15 +537,19 @@
     const merchants = [...d.merchants].sort((a, b) => b.wallet - a.wallet);
     merchantTbody.innerHTML = merchants.map((m) => {
       const delta = changeByMerchant.get(m.merchantId);
-      const deltaCell = delta == null
-        ? '<span class="client-va">—</span>'
-        : `<span style="color: ${delta > 0 ? 'var(--success)' : 'var(--danger)'}">${delta > 0 ? '+' : ''}${fmtINR2(delta)}</span>`;
+      const addedCell = delta != null && delta > 0
+        ? `<span style="color: var(--success)">+${fmtINR2(delta)}</span>`
+        : '<span class="client-va">—</span>';
+      const deductedCell = delta != null && delta < 0
+        ? `<span style="color: var(--danger)">${fmtINR2(delta)}</span>`
+        : '<span class="client-va">—</span>';
       return `
       <tr>
         <td class="client-name">${m.merchantName}</td>
         <td class="client-va">${m.merchantId}</td>
         <td class="num commission-cell">${fmtINR2(m.wallet)}</td>
-        <td class="num">${deltaCell}</td>
+        <td class="num">${addedCell}</td>
+        <td class="num">${deductedCell}</td>
         <td><span class="status-pill ${m.status === 'Active' ? 'active' : 'other'}">${m.status}</span></td>
       </tr>
     `;
