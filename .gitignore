@@ -1,6 +1,7 @@
 node_modules/
 .env
 data/accounts.json
+data/paynix-merchant-logins.json
 data/chrome-passwords.csv
 data/*passwords*.csv
 *passwords*.csv

@@ -129,6 +129,11 @@
   .status-pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 20px; }
   .status-pill.active { background: var(--success-soft); color: var(--success); }
   .status-pill.other { background: var(--surface-2); color: var(--text-muted); }
+  .wallet-log-toggle { padding: 3px 10px; font-size: 12px; }
+  .wallet-log-row td { background: var(--surface-2); padding: 10px 14px; }
+  .wallet-log-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .wallet-log-table th { text-align: left; font-weight: 600; color: var(--text-muted); padding: 4px 10px; }
+  .wallet-log-table td { padding: 4px 10px; }
 </style>
 
 <div class="wrap">
@@ -237,6 +242,7 @@
               <th class="num">Wallet Balance (₹)</th>
               <th class="num">Wallet Change (₹)</th>
               <th>Status</th>
+              <th></th>
             </tr>
           </thead>
           <tbody id="paynixMerchantTbody"></tbody>
@@ -561,6 +567,7 @@
     }
 
     const changeByMerchant = new Map((d.walletChanges || []).map((c) => [c.merchantId, c.delta]));
+    const walletLogs = d.walletLogs || {};
     const merchantTbody = document.getElementById('paynixMerchantTbody');
     const merchants = [...d.merchants].sort((a, b) => b.wallet - a.wallet);
     merchantTbody.innerHTML = merchants.map((m) => {
@@ -568,6 +575,30 @@
       const addedCell = delta != null
         ? `<span style="color: ${delta >= 0 ? 'var(--success)' : 'var(--danger)'}">${delta > 0 ? '+' : ''}${fmtINR2(delta)}</span>`
         : '<span class="client-va">—</span>';
+      const log = walletLogs[m.merchantId];
+      const toggleCell = log && log.length
+        ? `<button class="btn-reset wallet-log-toggle" type="button" data-merchant="${m.merchantId}">Recent ▾</button>`
+        : '<span class="client-va">—</span>';
+      const detailRow = log && log.length ? `
+      <tr class="wallet-log-row" id="walletLog-${m.merchantId}" hidden>
+        <td colspan="6">
+          <table class="wallet-log-table">
+            <thead><tr><th>Date &amp; Time</th><th>Type</th><th>Reference</th><th>Description</th><th class="num">Amount (₹)</th><th class="num">Balance After (₹)</th></tr></thead>
+            <tbody>
+              ${log.map((e) => `
+                <tr>
+                  <td class="client-va">${e.dateTime || '-'}</td>
+                  <td>${e.type || '-'}</td>
+                  <td class="client-va">${e.reference || '-'}</td>
+                  <td>${e.description || '-'}</td>
+                  <td class="num" style="color: ${e.amount >= 0 ? 'var(--success)' : 'var(--danger)'}">${e.amount > 0 ? '+' : ''}${fmtINR2(e.amount)}</td>
+                  <td class="num">${fmtINR2(e.balanceAfter)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </td>
+      </tr>` : '';
       return `
       <tr>
         <td class="client-name">${m.merchantName}</td>
@@ -575,9 +606,19 @@
         <td class="num commission-cell">${fmtINR2(m.wallet)}</td>
         <td class="num">${addedCell}</td>
         <td><span class="status-pill ${m.status === 'Active' ? 'active' : 'other'}">${m.status}</span></td>
+        <td>${toggleCell}</td>
       </tr>
+      ${detailRow}
     `;
     }).join('');
+
+    merchantTbody.querySelectorAll('.wallet-log-toggle').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const row = document.getElementById('walletLog-' + btn.dataset.merchant);
+        row.hidden = !row.hidden;
+        btn.textContent = row.hidden ? 'Recent ▾' : 'Recent ▴';
+      });
+    });
 
     const failedTbody = document.getElementById('paynixFailedTbody');
     if (!d.failedPayouts || d.failedPayouts.length === 0) {

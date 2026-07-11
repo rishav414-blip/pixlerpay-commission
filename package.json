@@ -9,8 +9,9 @@
     "calculate": "node scripts/calculate-commission.js",
     "gdrive-oauth-setup": "node scripts/gdrive-oauth-setup.js",
     "download-paynix": "node scripts/download-paynix.js",
+    "download-paynix-wallets": "node scripts/download-paynix-merchant-wallets.js",
     "upload-to-drive": "node scripts/upload-to-drive.js",
-    "all": "npm run download-report && npm run calculate && npm run download-paynix && npm run upload-to-drive"
+    "all": "npm run download-report && npm run calculate && npm run download-paynix && npm run download-paynix-wallets && npm run upload-to-drive"
   },
   "dependencies": {
     "playwright": "^1.47.0",
