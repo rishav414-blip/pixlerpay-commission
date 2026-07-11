@@ -2,12 +2,15 @@ import 'dotenv/config';
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fetchPreviousFromDrive } from './lib/drive-fetch.js';
 
 const {
   PAYNIX_LOGIN_URL = 'https://reseller.paynix.co.in/auth/login',
   PAYNIX_USERNAME,
   PAYNIX_PASSWORD,
   PAYNIX_HEADFUL,
+  GOOGLE_DRIVE_PAYNIX_FILE_ID,
+  GOOGLE_DRIVE_API_KEY,
 } = process.env;
 
 if (!PAYNIX_USERNAME || !PAYNIX_PASSWORD) {
@@ -137,13 +140,19 @@ async function scrapeDashboardSummary(page) {
   };
 }
 
-function loadPreviousSnapshot() {
-  if (!fs.existsSync(SNAPSHOT_FILE)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(SNAPSHOT_FILE, 'utf-8'));
-  } catch {
-    return null;
+async function loadPreviousSnapshot() {
+  if (fs.existsSync(SNAPSHOT_FILE)) {
+    try {
+      return JSON.parse(fs.readFileSync(SNAPSHOT_FILE, 'utf-8'));
+    } catch {
+      return null;
+    }
   }
+  // No local snapshot (e.g. a fresh CI checkout with no memory of the last
+  // run) — fall back to the last published snapshot on Drive so
+  // wallet-change / new-failure diffing has a real baseline instead of
+  // silently treating every run as the first-ever run.
+  return fetchPreviousFromDrive(GOOGLE_DRIVE_PAYNIX_FILE_ID, GOOGLE_DRIVE_API_KEY);
 }
 
 function computeWalletChanges(previous, current) {
@@ -183,7 +192,7 @@ async function gotoWithRetry(page, url, options) {
 }
 
 async function run() {
-  const previous = loadPreviousSnapshot();
+  const previous = await loadPreviousSnapshot();
   const browser = await chromium.launch({ headless });
   const context = await browser.newContext();
   const page = await context.newPage();

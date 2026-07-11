@@ -3,12 +3,15 @@ import { chromium } from 'playwright';
 import xlsx from 'xlsx';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fetchPreviousFromDrive } from './lib/drive-fetch.js';
 
 const {
   PIXLERPAY_MERCHANT_LOGIN_URL = 'https://merchant.paynix.co.in/auth/login',
   PIXLERPAY_MERCHANT_USERNAME,
   PIXLERPAY_MERCHANT_PASSWORD,
   PAYNIX_HEADFUL,
+  GOOGLE_DRIVE_PIXLERPAY_MERCHANT_FILE_ID,
+  GOOGLE_DRIVE_API_KEY,
 } = process.env;
 
 if (!PIXLERPAY_MERCHANT_USERNAME || !PIXLERPAY_MERCHANT_PASSWORD) {
@@ -19,7 +22,7 @@ if (!PIXLERPAY_MERCHANT_USERNAME || !PIXLERPAY_MERCHANT_PASSWORD) {
 const DATA_DIR = './data';
 const SNAPSHOT_FILE = path.join(DATA_DIR, 'pixlerpay-merchant-snapshot.json');
 const OUTPUT_JSON = path.join('./website', 'pixlerpay-merchant-results.json');
-const TOP_N_WALLET_LOG = 3;
+const TOP_N_WALLET_LOG = 5;
 
 const headless = PAYNIX_HEADFUL !== 'true';
 
@@ -70,6 +73,14 @@ async function scrapeWalletLog(page) {
     });
   }
   return entries;
+}
+
+// No previous entries (first-ever run) -> nothing is "new", it's just the
+// starting snapshot.
+function computeNewLoadRequests(previousEntries, currentEntries) {
+  if (!previousEntries) return [];
+  const prevIds = new Set(previousEntries.map((e) => e.requestId));
+  return currentEntries.filter((e) => e.requestId && !prevIds.has(e.requestId));
 }
 
 async function exportPayouts(page) {
@@ -125,13 +136,16 @@ async function run() {
   console.log('Scraping wallet balance...');
   const walletBalance = await scrapeWalletBalance(page);
 
-  console.log('Scraping wallet transaction log (top 3)...');
+  console.log(`Scraping wallet transaction log (top ${TOP_N_WALLET_LOG})...`);
   const walletLog = await scrapeWalletLog(page);
 
   console.log('Exporting payouts (xlsx download)...');
   const payouts = await exportPayouts(page);
 
   await browser.close();
+
+  const previousResults = await fetchPreviousFromDrive(GOOGLE_DRIVE_PIXLERPAY_MERCHANT_FILE_ID, GOOGLE_DRIVE_API_KEY);
+  const newLoadRequests = computeNewLoadRequests(previousResults?.walletLog, walletLog);
 
   const successPayouts = payouts.filter((p) => p.status === 'SUCCESS');
   const totalCommission = Math.round(successPayouts.reduce((sum, p) => sum + p.commission, 0) * 100) / 100;
@@ -141,6 +155,7 @@ async function run() {
     scrapedAt: new Date().toISOString(),
     walletBalance,
     walletLog,
+    newLoadRequests,
     summary: {
       totalPayouts: payouts.length,
       successCount: successPayouts.length,

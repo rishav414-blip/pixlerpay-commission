@@ -4,6 +4,7 @@ import path from 'node:path';
 
 const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID } = process.env;
 const PAYNIX_RESULTS_FILE = path.join('./website', 'paynix-results.json');
+const PIXLERPAY_MERCHANT_RESULTS_FILE = path.join('./website', 'pixlerpay-merchant-results.json');
 
 async function sendTelegramMessage(text) {
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
@@ -18,7 +19,11 @@ async function sendTelegramMessage(text) {
   }
 }
 
-function buildMessage(d) {
+function loadRequestLine(r) {
+  return `  • ${r.requestId || '-'} — ₹${r.amount.toLocaleString('en-IN')} — ${r.method || '-'} — ${r.status || '-'}`;
+}
+
+function buildPaynixMessage(d) {
   const lines = [];
 
   if (d.newFailedPayouts && d.newFailedPayouts.length > 0) {
@@ -39,6 +44,26 @@ function buildMessage(d) {
     }
   }
 
+  const merchantById = new Map((d.merchants || []).map((m) => [m.merchantId, m.merchantName]));
+  const newLoadRequests = d.newLoadRequests || {};
+  const merchantsWithNewRequests = Object.entries(newLoadRequests).filter(([, reqs]) => reqs.length > 0);
+  if (merchantsWithNewRequests.length > 0) {
+    if (lines.length) lines.push('');
+    lines.push(`💰 <b>New wallet top-up request(s)</b>`);
+    for (const [merchantId, reqs] of merchantsWithNewRequests) {
+      lines.push(`  <i>${merchantById.get(merchantId) || merchantId}</i>`);
+      for (const r of reqs) lines.push(loadRequestLine(r));
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function buildPixlerMerchantMessage(d) {
+  const reqs = d.newLoadRequests || [];
+  if (reqs.length === 0) return '';
+  const lines = [`💰 <b>PixlerPay Merchant — new wallet top-up request(s)</b>`];
+  for (const r of reqs) lines.push(loadRequestLine(r));
   return lines.join('\n');
 }
 
@@ -47,21 +72,30 @@ async function run() {
     console.log('TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set — skipping Telegram alert (not configured yet).');
     return;
   }
-  if (!fs.existsSync(PAYNIX_RESULTS_FILE)) {
-    console.log(`${PAYNIX_RESULTS_FILE} not found — nothing to alert on.`);
+
+  const messages = [];
+
+  if (fs.existsSync(PAYNIX_RESULTS_FILE)) {
+    const d = JSON.parse(fs.readFileSync(PAYNIX_RESULTS_FILE, 'utf-8'));
+    const msg = buildPaynixMessage(d);
+    if (msg) messages.push(msg);
+  }
+
+  if (fs.existsSync(PIXLERPAY_MERCHANT_RESULTS_FILE)) {
+    const d = JSON.parse(fs.readFileSync(PIXLERPAY_MERCHANT_RESULTS_FILE, 'utf-8'));
+    const msg = buildPixlerMerchantMessage(d);
+    if (msg) messages.push(msg);
+  }
+
+  if (messages.length === 0) {
+    console.log('Nothing new to alert on.');
     return;
   }
 
-  const d = JSON.parse(fs.readFileSync(PAYNIX_RESULTS_FILE, 'utf-8'));
-  const message = buildMessage(d);
-
-  if (!message) {
-    console.log('No new failed payouts or wallet changes — no alert sent.');
-    return;
+  for (const msg of messages) {
+    await sendTelegramMessage(msg);
   }
-
-  await sendTelegramMessage(message);
-  console.log('Telegram alert sent.');
+  console.log(`Telegram alert(s) sent: ${messages.length}.`);
 }
 
 run().catch((err) => {

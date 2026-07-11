@@ -1,20 +1,24 @@
-name: Refresh commission data
+name: Paynix wallet top-up alert
+
+# Fast, frequent check limited to the Paynix side (reseller dashboard +
+# per-merchant wallet "Load Requests" logs) so new top-up requests get
+# alerted on quickly, without re-running the slow full pipeline (18
+# PixlerPay account logins + a 700+ row payout export) every 15 minutes.
+# The full data refresh still happens separately every 30 min (refresh.yml).
 
 on:
   schedule:
-    # Every 30 minutes. GitHub's scheduler is best-effort and can be
-    # delayed under load — fine for this dashboard, not sub-minute precise.
-    - cron: '*/30 * * * *'
-  workflow_dispatch: {} # manual "Run workflow" button in the Actions tab
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
 
 concurrency:
-  group: refresh
-  cancel-in-progress: false
+  group: wallet-alert
+  cancel-in-progress: true
 
 jobs:
-  refresh:
+  wallet-alert:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -31,26 +35,22 @@ jobs:
       - name: Write credential files from secrets
         env:
           ENV_FILE: ${{ secrets.ENV_FILE }}
-          ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
           PAYNIX_MERCHANT_LOGINS: ${{ secrets.PAYNIX_MERCHANT_LOGINS }}
           GDRIVE_OAUTH_CLIENT: ${{ secrets.GDRIVE_OAUTH_CLIENT }}
           GDRIVE_OAUTH_TOKEN: ${{ secrets.GDRIVE_OAUTH_TOKEN }}
         run: |
           printf '%s' "$ENV_FILE" > .env
-          printf '%s' "$ACCOUNTS_JSON" > data/accounts.json
           printf '%s' "$PAYNIX_MERCHANT_LOGINS" > data/paynix-merchant-logins.json
           printf '%s' "$GDRIVE_OAUTH_CLIENT" > data/gdrive-oauth-client.json
           printf '%s' "$GDRIVE_OAUTH_TOKEN" > data/gdrive-oauth-token.json
 
-      - name: Run full refresh pipeline
+      - name: Scrape Paynix + alert on new wallet top-up requests
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          # Real env vars here take priority over dotenv's values from the
-          # .env file (dotenv doesn't override already-set vars), so this
-          # reliably forces headless mode in CI regardless of what the
-          # local-dev .env secret says. No display to watch a headed
-          # browser on in a GitHub-hosted runner anyway.
-          PIXLERPAY_HEADFUL: 'false'
           PAYNIX_HEADFUL: 'false'
-        run: npm run all
+        run: |
+          npm run download-paynix
+          npm run download-paynix-wallets
+          npm run upload-to-drive
+          npm run telegram-alert
