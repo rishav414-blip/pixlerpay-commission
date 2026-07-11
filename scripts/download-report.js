@@ -145,7 +145,16 @@ async function run() {
     console.log(s.ok ? `OK   ${s.account} -> ${s.savePath}` : `FAIL ${s.account}: ${s.error}`);
   }
 
-  if (saved.some((s) => !s.ok)) process.exitCode = 1;
+  const failed = saved.filter((s) => !s.ok);
+  if (failed.length > 0) {
+    console.warn(`\n${failed.length} of ${saved.length} account(s) failed — continuing with the rest.`);
+  }
+  // Exit non-zero only if EVERY account failed. A single known-broken
+  // client (e.g. N V CONNECT ACROSS's mismatched portal layout) shouldn't
+  // fail the whole `npm run all` chain and block every downstream step —
+  // that's especially costly in CI, where a single perpetually-broken
+  // client would otherwise block every scheduled run forever.
+  if (failed.length === saved.length && saved.length > 0) process.exitCode = 1;
 }
 
 run().catch((err) => {
