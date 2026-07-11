@@ -139,11 +139,9 @@
     </div>
     <div class="masthead-period" id="pixlerMasthead">
       <span class="live-badge"><span class="live-dot" id="liveDot"></span><span id="liveLabel">Connecting</span></span>
-      <strong id="periodLine">Last 30 days</strong>
     </div>
     <div class="masthead-period" id="paynixMasthead" hidden>
       <span class="live-badge"><span class="live-dot" id="paynixLiveDot"></span><span id="paynixLiveLabel">Connecting</span></span>
-      <strong id="paynixPeriodLine">Today + Last 30 days (rolling)</strong>
     </div>
   </header>
 
@@ -161,6 +159,7 @@
   </div>
 
   <div id="app" hidden>
+    <div class="masthead-sub" id="periodLine">Last 30 days</div>
     <section class="ledger-strip" id="ledgerStrip"></section>
 
     <div class="toolbar">
@@ -211,6 +210,7 @@
     </div>
 
     <div id="paynixApp" hidden>
+      <div class="masthead-sub" id="paynixPeriodLine">Today + Last 30 days (rolling)</div>
       <div class="toolbar">
         <button class="btn-refresh" id="paynixRefreshBtn" type="button">↻ Refresh</button>
         <span class="toolbar-count" id="paynixRefreshNote">Re-fetches the latest synced snapshot from Drive</span>
@@ -235,7 +235,7 @@
               <th>Merchant</th>
               <th>Merchant ID</th>
               <th class="num">Wallet Balance (₹)</th>
-              <th class="num">Added (₹)</th>
+              <th class="num">Wallet Change (₹)</th>
               <th>Status</th>
             </tr>
           </thead>
