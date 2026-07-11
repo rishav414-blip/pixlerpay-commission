@@ -170,6 +170,18 @@ function computeNewFailedPayouts(previous, current) {
   return current.filter((f) => f.transactionId && !prevIds.has(f.transactionId));
 }
 
+// The reseller portal's first page load is sometimes slow to respond
+// (especially from a distant GitHub Actions runner vs. a local/Indian
+// connection) — retry once with a longer timeout before giving up.
+async function gotoWithRetry(page, url, options) {
+  try {
+    await page.goto(url, { timeout: 60000, ...options });
+  } catch (err) {
+    console.warn(`goto ${url} timed out, retrying once...`);
+    await page.goto(url, { timeout: 60000, ...options });
+  }
+}
+
 async function run() {
   const previous = loadPreviousSnapshot();
   const browser = await chromium.launch({ headless });
@@ -177,7 +189,7 @@ async function run() {
   const page = await context.newPage();
 
   console.log('Logging into Paynix reseller portal...');
-  await page.goto(PAYNIX_LOGIN_URL, { waitUntil: 'domcontentloaded' });
+  await gotoWithRetry(page, PAYNIX_LOGIN_URL, { waitUntil: 'domcontentloaded' });
   await page.getByRole('textbox', { name: 'Email address' }).fill(PAYNIX_USERNAME);
   await page.getByRole('textbox', { name: 'Password' }).fill(PAYNIX_PASSWORD);
   await page.getByRole('button', { name: 'Log in' }).click();
