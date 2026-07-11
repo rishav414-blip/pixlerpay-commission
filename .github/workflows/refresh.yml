@@ -37,12 +37,16 @@ jobs:
           printf '%s' "$PAYNIX_MERCHANT_LOGINS" > data/paynix-merchant-logins.json
           printf '%s' "$GDRIVE_OAUTH_CLIENT" > data/gdrive-oauth-client.json
           printf '%s' "$GDRIVE_OAUTH_TOKEN" > data/gdrive-oauth-token.json
-          # Headless in CI — no display to watch the browser on.
-          echo "PIXLERPAY_HEADFUL=false" >> .env
-          echo "PAYNIX_HEADFUL=false" >> .env
 
       - name: Run full refresh pipeline
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Real env vars here take priority over dotenv's values from the
+          # .env file (dotenv doesn't override already-set vars), so this
+          # reliably forces headless mode in CI regardless of what the
+          # local-dev .env secret says. No display to watch a headed
+          # browser on in a GitHub-hosted runner anyway.
+          PIXLERPAY_HEADFUL: 'false'
+          PAYNIX_HEADFUL: 'false'
         run: npm run all
