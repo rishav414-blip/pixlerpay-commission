@@ -1,0 +1,48 @@
+name: Refresh commission data
+
+on:
+  schedule:
+    # Every 30 minutes. GitHub's scheduler is best-effort and can be
+    # delayed under load — fine for this dashboard, not sub-minute precise.
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {} # manual "Run workflow" button in the Actions tab
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Write credential files from secrets
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+          ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
+          PAYNIX_MERCHANT_LOGINS: ${{ secrets.PAYNIX_MERCHANT_LOGINS }}
+          GDRIVE_OAUTH_CLIENT: ${{ secrets.GDRIVE_OAUTH_CLIENT }}
+          GDRIVE_OAUTH_TOKEN: ${{ secrets.GDRIVE_OAUTH_TOKEN }}
+        run: |
+          printf '%s' "$ENV_FILE" > .env
+          printf '%s' "$ACCOUNTS_JSON" > data/accounts.json
+          printf '%s' "$PAYNIX_MERCHANT_LOGINS" > data/paynix-merchant-logins.json
+          printf '%s' "$GDRIVE_OAUTH_CLIENT" > data/gdrive-oauth-client.json
+          printf '%s' "$GDRIVE_OAUTH_TOKEN" > data/gdrive-oauth-token.json
+          # Headless in CI — no display to watch the browser on.
+          echo "PIXLERPAY_HEADFUL=false" >> .env
+          echo "PAYNIX_HEADFUL=false" >> .env
+
+      - name: Run full refresh pipeline
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: npm run all

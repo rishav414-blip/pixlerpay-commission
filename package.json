@@ -12,7 +12,8 @@
     "download-paynix-wallets": "node scripts/download-paynix-merchant-wallets.js",
     "download-pixlerpay-merchant": "node scripts/download-pixlerpay-merchant.js",
     "upload-to-drive": "node scripts/upload-to-drive.js",
-    "all": "npm run download-report && npm run calculate && npm run download-paynix && npm run download-paynix-wallets && npm run download-pixlerpay-merchant && npm run upload-to-drive"
+    "telegram-alert": "node scripts/telegram-alert.js",
+    "all": "npm run download-report && npm run calculate && npm run download-paynix && npm run download-paynix-wallets && npm run download-pixlerpay-merchant && npm run upload-to-drive && npm run telegram-alert"
   },
   "dependencies": {
     "playwright": "^1.47.0",
