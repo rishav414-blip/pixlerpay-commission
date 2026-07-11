@@ -148,11 +148,15 @@
     <div class="masthead-period" id="paynixMasthead" hidden>
       <span class="live-badge"><span class="live-dot" id="paynixLiveDot"></span><span id="paynixLiveLabel">Connecting</span></span>
     </div>
+    <div class="masthead-period" id="pixlerMerchantMasthead" hidden>
+      <span class="live-badge"><span class="live-dot" id="pixlerMerchantLiveDot"></span><span id="pixlerMerchantLiveLabel">Connecting</span></span>
+    </div>
   </header>
 
   <nav class="tabbar">
     <button class="tab-btn active" id="tabPixler" type="button">PixlerPay</button>
     <button class="tab-btn" id="tabPaynix" type="button">Paynix</button>
+    <button class="tab-btn" id="tabPixlerMerchant" type="button">PixlerPay Merchant</button>
   </nav>
 
   <div id="pixlerPanel">
@@ -262,6 +266,60 @@
             </tr>
           </thead>
           <tbody id="paynixFailedTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="pixlerMerchantPanel" hidden>
+    <div id="pixlerMerchantSetupPanel" class="setup-panel" hidden>
+      <h2>Not connected yet</h2>
+      <p>Waiting for a PixlerPay merchant data snapshot. Run <code>npm run download-pixlerpay-merchant</code>
+      then <code>npm run upload-to-drive</code> locally.</p>
+      <p class="err" id="pixlerMerchantSetupError"></p>
+    </div>
+
+    <div id="pixlerMerchantApp" hidden>
+      <div class="masthead-sub" id="pixlerMerchantPeriodLine">All-time payouts</div>
+      <div class="toolbar">
+        <button class="btn-refresh" id="pixlerMerchantRefreshBtn" type="button">↻ Refresh</button>
+        <span class="toolbar-count" id="pixlerMerchantRefreshNote">Re-fetches the latest synced snapshot from Drive</span>
+        <span class="toolbar-count" id="pixlerMerchantMetaLine"></span>
+      </div>
+
+      <section class="ledger-strip" id="pixlerMerchantLedgerStrip"></section>
+
+      <h2 class="section-heading">Recent Wallet Activity</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Date &amp; Time</th>
+              <th>Type</th>
+              <th>Reference</th>
+              <th>Description</th>
+              <th class="num">Amount (₹)</th>
+              <th class="num">Balance After (₹)</th>
+            </tr>
+          </thead>
+          <tbody id="pixlerMerchantWalletTbody"></tbody>
+        </table>
+      </div>
+
+      <h2 class="section-heading">Recent Payouts <span class="toolbar-count" id="pixlerMerchantPayoutCount"></span></h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Payout ID</th>
+              <th>Beneficiary</th>
+              <th class="num">Amount (₹)</th>
+              <th>Status</th>
+              <th>Created</th>
+              <th class="num">Commission (₹)</th>
+            </tr>
+          </thead>
+          <tbody id="pixlerMerchantPayoutTbody"></tbody>
         </table>
       </div>
     </div>
@@ -636,26 +694,118 @@
     }
   }
 
-  // ---- Tabs ----------------------------------------------------------
-  const tabPixler = document.getElementById('tabPixler');
-  const tabPaynix = document.getElementById('tabPaynix');
-  const pixlerPanel = document.getElementById('pixlerPanel');
-  const paynixPanel = document.getElementById('paynixPanel');
-  const pageTitle = document.getElementById('pageTitle');
+  // ---- PixlerPay Merchant tab ------------------------------------------
+  // PixlerPay's own Paynix merchant account (info@pixlerpay.com), separate
+  // from the 12 reseller merchants above. Commission here is NOT the
+  // margin model used elsewhere — it's a flat rule applied to successful
+  // payouts: 0.05% of amount for payouts over ₹1000, flat ₹1 at/below
+  // ₹1000 (mirrors scripts/download-pixlerpay-merchant.js calcCommission,
+  // which computes it server-side; the client just displays it).
+  const PIXLER_MERCHANT_FILE_ID = '1gCWH8z9GQpnl2vdgx9fpbg7yOHyPD6E-';
+  const pixlerMerchantUrl = `https://www.googleapis.com/drive/v3/files/${PIXLER_MERCHANT_FILE_ID}?alt=media&key=${DRIVE_API_KEY}`;
+  let PIXLER_MERCHANT_DATA = null;
+  let pixlerMerchantLoaded = false;
 
-  function showTab(tab) {
-    const isPixler = tab === 'pixler';
-    tabPixler.classList.toggle('active', isPixler);
-    tabPaynix.classList.toggle('active', !isPixler);
-    pixlerPanel.hidden = !isPixler;
-    paynixPanel.hidden = isPixler;
-    document.getElementById('pixlerMasthead').hidden = !isPixler;
-    document.getElementById('paynixMasthead').hidden = isPixler;
-    pageTitle.textContent = isPixler ? 'PixlerPay Commission Ledger' : 'Paynix Commission Ledger';
+  const pixlerMerchantLiveDot = document.getElementById('pixlerMerchantLiveDot');
+  const pixlerMerchantLiveLabel = document.getElementById('pixlerMerchantLiveLabel');
+
+  function setPixlerMerchantLiveState(state, label) {
+    pixlerMerchantLiveDot.className = 'live-dot ' + state;
+    pixlerMerchantLiveLabel.textContent = label;
   }
 
-  tabPixler.addEventListener('click', () => showTab('pixler'));
-  tabPaynix.addEventListener('click', () => {
+  async function fetchPixlerMerchantData() {
+    const setupPanel3 = document.getElementById('pixlerMerchantSetupPanel');
+    const app3 = document.getElementById('pixlerMerchantApp');
+    if (!PIXLER_MERCHANT_FILE_ID) {
+      setupPanel3.hidden = false;
+      app3.hidden = true;
+      setPixlerMerchantLiveState('error', 'Not configured');
+      document.getElementById('pixlerMerchantSetupError').textContent = 'PIXLER_MERCHANT_FILE_ID not set in docs/index.html yet.';
+      return;
+    }
+    try {
+      const res = await fetch(pixlerMerchantUrl, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Drive fetch failed: ${res.status} ${res.statusText}`);
+      PIXLER_MERCHANT_DATA = await res.json();
+      setupPanel3.hidden = true;
+      app3.hidden = false;
+      renderPixlerMerchant();
+      setPixlerMerchantLiveState('fresh', 'Live · ' + new Date().toLocaleTimeString('en-IN'));
+    } catch (err) {
+      console.error(err);
+      setPixlerMerchantLiveState('error', 'Connection failed');
+      if (!PIXLER_MERCHANT_DATA) {
+        setupPanel3.hidden = false;
+        document.getElementById('pixlerMerchantSetupError').textContent = err.message;
+        app3.hidden = true;
+      }
+    }
+  }
+
+  function renderPixlerMerchant() {
+    const d = PIXLER_MERCHANT_DATA;
+    document.getElementById('pixlerMerchantMetaLine').innerHTML = d.scrapedAt
+      ? 'generated ' + new Date(d.scrapedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) + staleBadge(d.scrapedAt)
+      : '';
+
+    document.getElementById('pixlerMerchantLedgerStrip').innerHTML = `
+      <div class="ledger-cell"><div class="ledger-label">Wallet Balance</div><div class="ledger-figure">${fmtINR(d.walletBalance)}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Successful Payouts</div><div class="ledger-figure">${d.summary.successCount.toLocaleString('en-IN')}<small>of ${d.summary.totalPayouts}</small></div></div>
+      <div class="ledger-cell"><div class="ledger-label">Success Volume</div><div class="ledger-figure">${fmtINR(d.summary.totalSuccessVolume)}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Total Commission</div><div class="ledger-figure accent">${fmtINR2(d.summary.totalCommission)}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Failed Payouts</div><div class="ledger-figure">${d.summary.failedCount.toLocaleString('en-IN')}</div></div>
+    `;
+
+    const walletTbody = document.getElementById('pixlerMerchantWalletTbody');
+    const log = d.walletLog || [];
+    walletTbody.innerHTML = log.length ? log.map((e) => `
+      <tr>
+        <td class="client-va">${e.dateTime || '-'}</td>
+        <td>${e.type || '-'}</td>
+        <td class="client-va">${e.reference || '-'}</td>
+        <td>${e.description || '-'}</td>
+        <td class="num" style="color: ${e.amount >= 0 ? 'var(--success)' : 'var(--danger)'}">${e.amount > 0 ? '+' : ''}${fmtINR2(e.amount)}</td>
+        <td class="num">${fmtINR2(e.balanceAfter)}</td>
+      </tr>
+    `).join('') : '<tr class="empty-row"><td colspan="6">No wallet activity captured.</td></tr>';
+
+    const payouts = [...d.payouts].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    const RECENT_N = 50;
+    document.getElementById('pixlerMerchantPayoutCount').textContent = `showing latest ${Math.min(RECENT_N, payouts.length)} of ${payouts.length}`;
+    const payoutTbody = document.getElementById('pixlerMerchantPayoutTbody');
+    payoutTbody.innerHTML = payouts.slice(0, RECENT_N).map((p) => `
+      <tr>
+        <td class="client-va">${p.payoutId || '-'}</td>
+        <td>${p.beneficiaryName || '-'}</td>
+        <td class="num">${fmtINR(p.amount)}</td>
+        <td><span class="status-pill ${p.status === 'SUCCESS' ? 'active' : 'other'}">${p.status || '-'}</span></td>
+        <td class="client-va">${p.createdAt || '-'}</td>
+        <td class="num">${p.commission ? fmtINR2(p.commission) : '—'}</td>
+      </tr>
+    `).join('');
+  }
+
+  // ---- Tabs ----------------------------------------------------------
+  const TABS = {
+    pixler: { btn: 'tabPixler', panel: 'pixlerPanel', masthead: 'pixlerMasthead', title: 'PixlerPay Commission Ledger' },
+    paynix: { btn: 'tabPaynix', panel: 'paynixPanel', masthead: 'paynixMasthead', title: 'Paynix Commission Ledger' },
+    pixlerMerchant: { btn: 'tabPixlerMerchant', panel: 'pixlerMerchantPanel', masthead: 'pixlerMerchantMasthead', title: 'PixlerPay Merchant Payouts' },
+  };
+  const pageTitle = document.getElementById('pageTitle');
+
+  function showTab(activeTab) {
+    for (const [tab, cfg] of Object.entries(TABS)) {
+      const isActive = tab === activeTab;
+      document.getElementById(cfg.btn).classList.toggle('active', isActive);
+      document.getElementById(cfg.panel).hidden = !isActive;
+      document.getElementById(cfg.masthead).hidden = !isActive;
+      if (isActive) pageTitle.textContent = cfg.title;
+    }
+  }
+
+  document.getElementById('tabPixler').addEventListener('click', () => showTab('pixler'));
+  document.getElementById('tabPaynix').addEventListener('click', () => {
     showTab('paynix');
     if (!paynixLoaded) {
       paynixLoaded = true;
@@ -663,7 +813,16 @@
       setInterval(fetchPaynixData, REFRESH_INTERVAL_MS);
     }
   });
+  document.getElementById('tabPixlerMerchant').addEventListener('click', () => {
+    showTab('pixlerMerchant');
+    if (!pixlerMerchantLoaded) {
+      pixlerMerchantLoaded = true;
+      fetchPixlerMerchantData();
+      setInterval(fetchPixlerMerchantData, REFRESH_INTERVAL_MS);
+    }
+  });
   document.getElementById('paynixRefreshBtn').addEventListener('click', fetchPaynixData);
+  document.getElementById('pixlerMerchantRefreshBtn').addEventListener('click', fetchPixlerMerchantData);
 </script>
 </body>
 </html>
