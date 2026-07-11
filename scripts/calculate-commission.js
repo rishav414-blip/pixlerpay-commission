@@ -5,6 +5,7 @@ import XLSX from 'xlsx';
 const DATA_DIR = './data';
 const RATES_FILE = path.join(DATA_DIR, 'commission-rates.json');
 const ACCOUNTS_FILE = path.join(DATA_DIR, 'accounts.json');
+const MANUAL_TRANSACTIONS_FILE = path.join(DATA_DIR, 'manual-transactions.json');
 const OUTPUT_JSON = path.join('./website', 'commission-results.json');
 
 // --- Column name guesses -------------------------------------------------
@@ -168,6 +169,45 @@ function main() {
       // [va, isoDate, amount] — array form to keep the transaction log compact.
       transactions.push([rate.va, isoDate, amount]);
     }
+  }
+
+  // Manual entries for clients whose automation can't currently run (e.g.
+  // a broken portal scrape) — see data/manual-transactions.json. Treated
+  // identically to a successful scraped transaction once entered.
+  const manualEntries = fs.existsSync(MANUAL_TRANSACTIONS_FILE)
+    ? JSON.parse(fs.readFileSync(MANUAL_TRANSACTIONS_FILE, 'utf-8'))
+    : [];
+  for (const entry of manualEntries) {
+    const rate = rateByName.get(entry.clientName.trim().toUpperCase());
+    if (!rate || rate.onboardedPct == null || rate.resellerPct == null) {
+      console.warn(`[manual entry: ${entry.clientName}] SKIPPED: no usable commission rate found in commission-rates.json`);
+      continue;
+    }
+    const result = calculateCommission(entry.amount, rate);
+    if (!result) continue;
+
+    if (!perClient.has(entry.clientName)) {
+      perClient.set(entry.clientName, {
+        clientName: entry.clientName,
+        va: rate.va,
+        onboardedPct: rate.onboardedPct,
+        resellerPct: rate.resellerPct,
+        onboardedFlat100to200: rate.onboardedFlat100to200,
+        resellerFlat100to200: rate.resellerFlat100to200,
+        marginPct: Math.round((rate.onboardedPct - rate.resellerPct) * 100) / 100,
+        successfulTxns: 0,
+        totalAmount: 0,
+        totalCommission: 0,
+      });
+    }
+    const agg = perClient.get(entry.clientName);
+    totalSuccessfulTxns += 1;
+    totalCommission += result.commission;
+    agg.successfulTxns += 1;
+    agg.totalAmount += entry.amount;
+    agg.totalCommission += result.commission;
+    transactions.push([rate.va, entry.date, entry.amount]);
+    console.log(`[manual entry: ${entry.clientName}] Added Rs ${entry.amount} on ${entry.date} -> commission Rs ${Math.round(result.commission * 100) / 100}`);
   }
 
   const results = {
