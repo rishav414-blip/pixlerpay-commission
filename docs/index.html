@@ -45,6 +45,9 @@
   .masthead-title { font-family: var(--serif); font-size: clamp(26px, 3.4vw, 34px); font-weight: 500; letter-spacing: 0.01em; text-wrap: balance; margin: 0; }
   .masthead-sub { font-size: 13px; color: var(--text-muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
   .stale-badge { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 3px; font-size: 11px; font-weight: 600; background: rgba(166, 95, 34, 0.14); color: var(--warn); }
+  .tab-freshness { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-left: 7px; vertical-align: middle; background: transparent; }
+  .tab-freshness.fresh { background: var(--success); }
+  .tab-freshness.stale { background: var(--warn); }
   .masthead-period { text-align: right; font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
   .masthead-period strong { display: block; font-family: var(--serif); font-size: 15px; color: var(--accent); text-transform: none; letter-spacing: 0; margin-top: 2px; }
 
@@ -154,9 +157,9 @@
   </header>
 
   <nav class="tabbar">
-    <button class="tab-btn active" id="tabPixler" type="button">PixlerPay</button>
-    <button class="tab-btn" id="tabPaynix" type="button">Paynix</button>
-    <button class="tab-btn" id="tabPixlerMerchant" type="button">PixlerPay Merchant</button>
+    <button class="tab-btn active" id="tabPixler" type="button">PixlerPay<span class="tab-freshness" id="tabPixlerFreshness" title=""></span></button>
+    <button class="tab-btn" id="tabPaynix" type="button">Paynix<span class="tab-freshness" id="tabPaynixFreshness" title=""></span></button>
+    <button class="tab-btn" id="tabPixlerMerchant" type="button">PixlerPay Merchant<span class="tab-freshness" id="tabPixlerMerchantFreshness" title=""></span></button>
   </nav>
 
   <div id="pixlerPanel">
@@ -282,6 +285,13 @@
     <div id="pixlerMerchantApp" hidden>
       <div class="masthead-sub" id="pixlerMerchantPeriodLine">All-time payouts</div>
       <div class="toolbar">
+        <label>From
+          <input type="date" id="pixlerMerchantRangeFrom">
+        </label>
+        <label>To
+          <input type="date" id="pixlerMerchantRangeTo">
+        </label>
+        <button class="btn-reset" id="pixlerMerchantResetBtn" type="button">Reset filters</button>
         <button class="btn-refresh" id="pixlerMerchantRefreshBtn" type="button">↻ Refresh</button>
         <span class="toolbar-count" id="pixlerMerchantRefreshNote">Re-fetches the latest synced snapshot from Drive</span>
         <span class="toolbar-count" id="pixlerMerchantMetaLine"></span>
@@ -289,17 +299,17 @@
 
       <section class="ledger-strip" id="pixlerMerchantLedgerStrip"></section>
 
-      <h2 class="section-heading">Recent Wallet Activity</h2>
+      <h2 class="section-heading">Recent Wallet Top-Ups</h2>
       <div class="table-scroll">
         <table>
           <thead>
             <tr>
-              <th>Date &amp; Time</th>
-              <th>Type</th>
-              <th>Reference</th>
-              <th>Description</th>
+              <th>Request ID</th>
               <th class="num">Amount (₹)</th>
-              <th class="num">Balance After (₹)</th>
+              <th>Method</th>
+              <th>UTR</th>
+              <th>Status</th>
+              <th>Created</th>
             </tr>
           </thead>
           <tbody id="pixlerMerchantWalletTbody"></tbody>
@@ -339,13 +349,19 @@
   const driveUrl = `https://www.googleapis.com/drive/v3/files/${DRIVE_FILE_ID}?alt=media&key=${DRIVE_API_KEY}`;
 
   const STALE_THRESHOLD_MS = 20 * 60 * 1000; // 20 minutes
-  function staleBadge(isoString) {
-    if (!isoString) return '';
+
+  // Each tab's data is generated at a different time (separate scrapes), so
+  // freshness is shown as a small dot directly on that tab's button rather
+  // than duplicated inline text on every tab's meta line.
+  function updateTabFreshness(freshnessElId, isoString) {
+    const el = document.getElementById(freshnessElId);
+    if (!isoString) { el.className = 'tab-freshness'; el.title = ''; return; }
     const ageMs = Date.now() - new Date(isoString).getTime();
-    if (ageMs < STALE_THRESHOLD_MS) return '';
+    const isStale = ageMs >= STALE_THRESHOLD_MS;
     const mins = Math.round(ageMs / 60000);
     const ageLabel = mins < 60 ? `${mins}m old` : `${Math.round(mins / 60)}h old`;
-    return `<span class="stale-badge">⏱ stale · ${ageLabel}</span>`;
+    el.className = 'tab-freshness ' + (isStale ? 'stale' : 'fresh');
+    el.title = (isStale ? 'Stale · ' : 'Fresh · ') + ageLabel;
   }
 
   function fmtINR(n) { return '₹' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 0 }); }
@@ -480,7 +496,8 @@
 
     const range = computeForRange();
 
-    metaLine.innerHTML = `${DATA.sourceReports.length} merchant accounts · generated ${new Date(DATA.generatedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}${staleBadge(DATA.generatedAt)}`;
+    metaLine.textContent = `${DATA.sourceReports.length} merchant accounts · generated ${new Date(DATA.generatedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}`;
+    updateTabFreshness('tabPixlerFreshness', DATA.generatedAt);
 
     document.getElementById('ledgerStrip').innerHTML = `
       <div class="ledger-cell"><div class="ledger-label">Successful Transactions</div><div class="ledger-figure">${range.totalSuccessfulTxns.toLocaleString('en-IN')}</div></div>
@@ -596,9 +613,10 @@
 
   function renderPaynix() {
     const d = PAYNIX_DATA;
-    document.getElementById('paynixMetaLine').innerHTML = d.scrapedAt
-      ? 'generated ' + new Date(d.scrapedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) + staleBadge(d.scrapedAt)
+    document.getElementById('paynixMetaLine').textContent = d.scrapedAt
+      ? 'generated ' + new Date(d.scrapedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
       : '';
+    updateTabFreshness('tabPaynixFreshness', d.scrapedAt);
     document.getElementById('paynixLedgerStrip').innerHTML = `
       <div class="ledger-cell"><div class="ledger-label">Active Merchants</div><div class="ledger-figure">${d.summary.activeMerchants ?? '-'}</div></div>
       <div class="ledger-cell"><div class="ledger-label">30-Day Payout Volume</div><div class="ledger-figure">${fmtINR(d.summary.last30Days.successVolume)}</div></div>
@@ -641,16 +659,16 @@
       <tr class="wallet-log-row" id="walletLog-${m.merchantId}" hidden>
         <td colspan="6">
           <table class="wallet-log-table">
-            <thead><tr><th>Date &amp; Time</th><th>Type</th><th>Reference</th><th>Description</th><th class="num">Amount (₹)</th><th class="num">Balance After (₹)</th></tr></thead>
+            <thead><tr><th>Request ID</th><th class="num">Amount (₹)</th><th>Method</th><th>UTR</th><th>Status</th><th>Created</th></tr></thead>
             <tbody>
               ${log.map((e) => `
                 <tr>
-                  <td class="client-va">${e.dateTime || '-'}</td>
-                  <td>${e.type || '-'}</td>
-                  <td class="client-va">${e.reference || '-'}</td>
-                  <td>${e.description || '-'}</td>
-                  <td class="num" style="color: ${e.amount >= 0 ? 'var(--success)' : 'var(--danger)'}">${e.amount > 0 ? '+' : ''}${fmtINR2(e.amount)}</td>
-                  <td class="num">${fmtINR2(e.balanceAfter)}</td>
+                  <td class="client-va">${e.requestId || '-'}</td>
+                  <td class="num">${fmtINR2(e.amount)}</td>
+                  <td>${e.method || '-'}</td>
+                  <td class="client-va">${e.utr || '-'}</td>
+                  <td><span class="status-pill ${e.status === 'Approved' ? 'active' : 'other'}">${e.status || '-'}</span></td>
+                  <td class="client-va">${e.createdAt || '-'}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -705,6 +723,56 @@
   const pixlerMerchantUrl = `https://www.googleapis.com/drive/v3/files/${PIXLER_MERCHANT_FILE_ID}?alt=media&key=${DRIVE_API_KEY}`;
   let PIXLER_MERCHANT_DATA = null;
   let pixlerMerchantLoaded = false;
+  let pixlerMerchantRangeFrom = null; // 'YYYY-MM-DD' or null = no lower bound
+  let pixlerMerchantRangeTo = null;
+
+  // "10/07/2026 22:53:23" (DD/MM/YYYY HH:MM:SS) -> "2026-07-10" for date-input comparison
+  function parsePixlerMerchantDate(createdAt) {
+    const m = createdAt && createdAt.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+    return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+  }
+
+  // Same, but keeps the time portion too -> "2026-07-10 22:53:23", so
+  // chronological sort works correctly across month/year boundaries
+  // (plain DD/MM/YYYY string sort does not).
+  function toSortableDateTime(createdAt) {
+    const m = createdAt && createdAt.match(/^(\d{2})\/(\d{2})\/(\d{4}) (.+)$/);
+    return m ? `${m[3]}-${m[2]}-${m[1]} ${m[4]}` : '';
+  }
+
+  function initPixlerMerchantDateRange() {
+    let min = null, max = null;
+    for (const p of PIXLER_MERCHANT_DATA.payouts) {
+      const iso = parsePixlerMerchantDate(p.createdAt);
+      if (!iso) continue;
+      if (!min || iso < min) min = iso;
+      if (!max || iso > max) max = iso;
+    }
+    pixlerMerchantRangeFrom = min;
+    pixlerMerchantRangeTo = max;
+    const fromInput = document.getElementById('pixlerMerchantRangeFrom');
+    const toInput = document.getElementById('pixlerMerchantRangeTo');
+    fromInput.min = min; fromInput.max = max; fromInput.value = min;
+    toInput.min = min; toInput.max = max; toInput.value = max;
+  }
+
+  function computePixlerMerchantForRange() {
+    const payouts = PIXLER_MERCHANT_DATA.payouts.filter((p) => {
+      const iso = parsePixlerMerchantDate(p.createdAt);
+      if (pixlerMerchantRangeFrom && (!iso || iso < pixlerMerchantRangeFrom)) return false;
+      if (pixlerMerchantRangeTo && (!iso || iso > pixlerMerchantRangeTo)) return false;
+      return true;
+    });
+    const success = payouts.filter((p) => p.status === 'SUCCESS');
+    return {
+      payouts,
+      successCount: success.length,
+      failedCount: payouts.filter((p) => p.status === 'FAILED').length,
+      totalPayouts: payouts.length,
+      totalSuccessVolume: Math.round(success.reduce((s, p) => s + p.amount, 0) * 100) / 100,
+      totalCommission: Math.round(success.reduce((s, p) => s + (p.commission || 0), 0) * 100) / 100,
+    };
+  }
 
   const pixlerMerchantLiveDot = document.getElementById('pixlerMerchantLiveDot');
   const pixlerMerchantLiveLabel = document.getElementById('pixlerMerchantLiveLabel');
@@ -727,9 +795,11 @@
     try {
       const res = await fetch(pixlerMerchantUrl, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Drive fetch failed: ${res.status} ${res.statusText}`);
+      const isFirstLoad = !PIXLER_MERCHANT_DATA;
       PIXLER_MERCHANT_DATA = await res.json();
       setupPanel3.hidden = true;
       app3.hidden = false;
+      if (isFirstLoad) initPixlerMerchantDateRange();
       renderPixlerMerchant();
       setPixlerMerchantLiveState('fresh', 'Live · ' + new Date().toLocaleTimeString('en-IN'));
     } catch (err) {
@@ -745,32 +815,42 @@
 
   function renderPixlerMerchant() {
     const d = PIXLER_MERCHANT_DATA;
-    document.getElementById('pixlerMerchantMetaLine').innerHTML = d.scrapedAt
-      ? 'generated ' + new Date(d.scrapedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) + staleBadge(d.scrapedAt)
+    document.getElementById('pixlerMerchantMetaLine').textContent = d.scrapedAt
+      ? 'generated ' + new Date(d.scrapedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
       : '';
+    updateTabFreshness('tabPixlerMerchantFreshness', d.scrapedAt);
+
+    const periodLine = document.getElementById('pixlerMerchantPeriodLine');
+    if (pixlerMerchantRangeFrom && pixlerMerchantRangeTo) {
+      periodLine.textContent = pixlerMerchantRangeFrom === pixlerMerchantRangeTo
+        ? pixlerMerchantRangeFrom
+        : `${pixlerMerchantRangeFrom} → ${pixlerMerchantRangeTo}`;
+    }
+
+    const range = computePixlerMerchantForRange();
 
     document.getElementById('pixlerMerchantLedgerStrip').innerHTML = `
       <div class="ledger-cell"><div class="ledger-label">Wallet Balance</div><div class="ledger-figure">${fmtINR(d.walletBalance)}</div></div>
-      <div class="ledger-cell"><div class="ledger-label">Successful Payouts</div><div class="ledger-figure">${d.summary.successCount.toLocaleString('en-IN')}<small>of ${d.summary.totalPayouts}</small></div></div>
-      <div class="ledger-cell"><div class="ledger-label">Success Volume</div><div class="ledger-figure">${fmtINR(d.summary.totalSuccessVolume)}</div></div>
-      <div class="ledger-cell"><div class="ledger-label">Total Commission</div><div class="ledger-figure accent">${fmtINR2(d.summary.totalCommission)}</div></div>
-      <div class="ledger-cell"><div class="ledger-label">Failed Payouts</div><div class="ledger-figure">${d.summary.failedCount.toLocaleString('en-IN')}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Successful Payouts</div><div class="ledger-figure">${range.successCount.toLocaleString('en-IN')}<small>of ${range.totalPayouts}</small></div></div>
+      <div class="ledger-cell"><div class="ledger-label">Success Volume</div><div class="ledger-figure">${fmtINR(range.totalSuccessVolume)}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Total Commission</div><div class="ledger-figure accent">${fmtINR2(range.totalCommission)}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Failed Payouts</div><div class="ledger-figure">${range.failedCount.toLocaleString('en-IN')}</div></div>
     `;
 
     const walletTbody = document.getElementById('pixlerMerchantWalletTbody');
     const log = d.walletLog || [];
     walletTbody.innerHTML = log.length ? log.map((e) => `
       <tr>
-        <td class="client-va">${e.dateTime || '-'}</td>
-        <td>${e.type || '-'}</td>
-        <td class="client-va">${e.reference || '-'}</td>
-        <td>${e.description || '-'}</td>
-        <td class="num" style="color: ${e.amount >= 0 ? 'var(--success)' : 'var(--danger)'}">${e.amount > 0 ? '+' : ''}${fmtINR2(e.amount)}</td>
-        <td class="num">${fmtINR2(e.balanceAfter)}</td>
+        <td class="client-va">${e.requestId || '-'}</td>
+        <td class="num">${fmtINR2(e.amount)}</td>
+        <td>${e.method || '-'}</td>
+        <td class="client-va">${e.utr || '-'}</td>
+        <td><span class="status-pill ${e.status === 'Approved' ? 'active' : 'other'}">${e.status || '-'}</span></td>
+        <td class="client-va">${e.createdAt || '-'}</td>
       </tr>
-    `).join('') : '<tr class="empty-row"><td colspan="6">No wallet activity captured.</td></tr>';
+    `).join('') : '<tr class="empty-row"><td colspan="6">No wallet top-up activity captured.</td></tr>';
 
-    const payouts = [...d.payouts].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    const payouts = [...range.payouts].sort((a, b) => toSortableDateTime(b.createdAt).localeCompare(toSortableDateTime(a.createdAt)));
     const RECENT_N = 50;
     document.getElementById('pixlerMerchantPayoutCount').textContent = `showing latest ${Math.min(RECENT_N, payouts.length)} of ${payouts.length}`;
     const payoutTbody = document.getElementById('pixlerMerchantPayoutTbody');
@@ -823,6 +903,18 @@
   });
   document.getElementById('paynixRefreshBtn').addEventListener('click', fetchPaynixData);
   document.getElementById('pixlerMerchantRefreshBtn').addEventListener('click', fetchPixlerMerchantData);
+  document.getElementById('pixlerMerchantRangeFrom').addEventListener('change', (e) => {
+    pixlerMerchantRangeFrom = e.target.value || null;
+    renderPixlerMerchant();
+  });
+  document.getElementById('pixlerMerchantRangeTo').addEventListener('change', (e) => {
+    pixlerMerchantRangeTo = e.target.value || null;
+    renderPixlerMerchant();
+  });
+  document.getElementById('pixlerMerchantResetBtn').addEventListener('click', () => {
+    initPixlerMerchantDateRange();
+    renderPixlerMerchant();
+  });
 </script>
 </body>
 </html>

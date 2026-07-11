@@ -27,10 +27,11 @@ async function scrapeWalletLog(page, login) {
   await page.goto('https://merchant.paynix.co.in/dashboard/wallet', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2000);
 
-  // The page has two tables ("Load Requests" top-ups and "Transaction
-  // History" full ledger) — target the ledger one specifically by its
-  // header text, not just the first <table> on the page.
-  const table = page.locator('table').filter({ hasText: 'DATE & TIME' }).first();
+  // The page has two tables — "Load Requests" (wallet top-ups: REQUEST ID,
+  // AMOUNT, METHOD, UTR, STATUS, CREATED) and "Transaction History" (full
+  // debit/credit ledger). Wallet-log entries here track top-up requests,
+  // so target the Load Requests table specifically by its header text.
+  const table = page.locator('table').filter({ hasText: 'REQUEST ID' }).first();
   const rows = table.locator('tbody tr');
   const count = await rows.count();
   const entries = [];
@@ -39,12 +40,12 @@ async function scrapeWalletLog(page, login) {
     const cells = await rows.nth(i).locator('td').evaluateAll((tds) => tds.map((td) => td.innerText.trim()));
     if (cells.length < 6) continue;
     entries.push({
-      dateTime: cells[0] || null,
-      type: cells[1] || null,
-      reference: cells[2] || null,
-      description: cells[3] || null,
-      amount: parseINR(cells[4]),
-      balanceAfter: parseINR(cells[5]),
+      requestId: cells[0] || null,
+      amount: parseINR(cells[1]),
+      method: cells[2] || null,
+      utr: cells[3] || null,
+      status: cells[4] || null,
+      createdAt: cells[5] || null,
     });
   }
   return entries;
