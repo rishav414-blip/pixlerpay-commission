@@ -1052,9 +1052,12 @@
       const volumeCell = range ? fmtINR(range.totalAmount) : '<span class="client-va">no data</span>';
       const commissionCell = range ? fmtINR2(range.totalCommission) : '<span class="client-va">no data</span>';
       const akCell = range ? fmtINR2(range.totalAkCommission) : '<span class="client-va">no data</span>';
+      const pctLine = c
+        ? `<div class="client-va">${c.onboardedPct.toFixed(2)}% onboarded − ${c.resellerPct.toFixed(2)}% reseller = ${c.marginPct.toFixed(2)}% margin · AK ${(c.akPct ?? 0).toFixed(2)}%</div>`
+        : '';
       return `
       <tr>
-        <td><div class="client-name">${m.merchantName}</div><div class="client-va">${m.merchantId}</div></td>
+        <td><div class="client-name">${m.merchantName}</div><div class="client-va">${m.merchantId}</div>${pctLine}</td>
         <td class="num">${volumeCell}</td>
         <td class="num commission-cell">${commissionCell}</td>
         <td class="num">${akCell}</td>
@@ -1077,7 +1080,12 @@
       }
     }
     allLogEntries.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-    walletLogTbody.innerHTML = allLogEntries.length ? allLogEntries.map((e) => `
+    // Display cap: only the 10 most recent entries overall are shown here.
+    // This is independent of TOP_N = 5 in download-paynix-merchant-wallets.js,
+    // which caps how many entries are *collected* per merchant — do not
+    // "fix" one to match the other, they serve different purposes.
+    const recentLogEntries = allLogEntries.slice(0, 10);
+    walletLogTbody.innerHTML = recentLogEntries.length ? recentLogEntries.map((e) => `
       <tr>
         <td class="client-name">${e.merchantName}</td>
         <td class="client-va">${e.requestId || '-'}</td>
