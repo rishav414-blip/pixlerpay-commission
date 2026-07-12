@@ -241,10 +241,19 @@
     <div id="paynixApp" hidden>
       <div class="masthead-sub" id="paynixPeriodLine">Today + Last 30 days (rolling)</div>
       <div class="toolbar">
+        <label>From
+          <input type="date" id="paynixRangeFrom">
+        </label>
+        <label>To
+          <input type="date" id="paynixRangeTo">
+        </label>
+        <button class="btn-reset" id="paynixResetRangeBtn" type="button">Reset filters</button>
         <button class="btn-refresh" id="paynixRefreshBtn" type="button">↻ Refresh</button>
+        <button class="btn-download" id="paynixDownloadBtn" type="button">⬇ Download Excel</button>
         <span class="toolbar-count" id="paynixRefreshNote">Re-fetches the latest synced snapshot from Drive</span>
         <span class="toolbar-count" id="paynixMetaLine"></span>
       </div>
+      <div class="download-error" id="paynixDownloadError"></div>
 
       <section class="ledger-strip" id="paynixLedgerStrip"></section>
 
@@ -257,19 +266,39 @@
         <span id="paynixWalletList"></span>
       </div>
 
+      <h2 class="section-heading">Commission by Client</h2>
       <div class="table-scroll">
         <table>
           <thead>
             <tr>
-              <th>Merchant</th>
-              <th>Merchant ID</th>
+              <th>Client</th>
+              <th class="num">Volume (₹)</th>
+              <th class="num">Commission (₹)</th>
+              <th class="num">AK Commission (₹)</th>
               <th class="num">Wallet Balance (₹)</th>
               <th class="num">Wallet Change (₹)</th>
               <th>Status</th>
-              <th></th>
             </tr>
           </thead>
           <tbody id="paynixMerchantTbody"></tbody>
+        </table>
+      </div>
+
+      <h2 class="section-heading">Recent Wallet Top-Ups — All Clients</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Client</th>
+              <th>Request ID</th>
+              <th class="num">Amount (₹)</th>
+              <th>Method</th>
+              <th>UTR</th>
+              <th>Status</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody id="paynixWalletLogTbody"></tbody>
         </table>
       </div>
 
@@ -832,12 +861,114 @@
   let PAYNIX_DATA = null;
   let paynixLoaded = false;
 
+  // Commission (margin + AK) is a SEPARATE Drive file from the reseller
+  // wallet/failed-payout snapshot above — computed by
+  // calculate-paynix-commission.js from per-merchant payout exports, not
+  // scraped from the reseller dashboard. This ID is set after the first
+  // `npm run upload-to-drive` publishes paynix-commission-results.json —
+  // see HANDOFF.md "Paynix commission (margin + AK)".
+  const PAYNIX_COMMISSION_FILE_ID = '1bkoSbTanYiyPOHvjqLSTLVq5cbXYzg9j';
+  let PAYNIX_COMMISSION_DATA = null;
+  let paynixRangeFrom = null;
+  let paynixRangeTo = null;
+
   const paynixLiveDot = document.getElementById('paynixLiveDot');
   const paynixLiveLabel = document.getElementById('paynixLiveLabel');
 
   function setPaynixLiveState(state, label) {
     paynixLiveDot.className = 'live-dot ' + state;
     paynixLiveLabel.textContent = label;
+  }
+
+  async function fetchPaynixCommissionData() {
+    if (!PAYNIX_COMMISSION_FILE_ID) return; // not yet published — table shows "no data" per client
+    try {
+      const url = `https://www.googleapis.com/drive/v3/files/${PAYNIX_COMMISSION_FILE_ID}?alt=media&key=${DRIVE_API_KEY}`;
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Drive fetch failed: ${res.status} ${res.statusText}`);
+      const isFirstLoad = !PAYNIX_COMMISSION_DATA;
+      PAYNIX_COMMISSION_DATA = await res.json();
+      if (isFirstLoad) initPaynixDateRange();
+    } catch (err) {
+      console.error('Paynix commission fetch failed:', err);
+    }
+  }
+
+  function initPaynixDateRange() {
+    if (!PAYNIX_COMMISSION_DATA) return;
+    let min = null, max = null;
+    for (const [, isoDate] of PAYNIX_COMMISSION_DATA.transactions) {
+      if (!isoDate) continue;
+      if (!min || isoDate < min) min = isoDate;
+      if (!max || isoDate > max) max = isoDate;
+    }
+    paynixRangeFrom = min;
+    paynixRangeTo = max;
+    const fromInput = document.getElementById('paynixRangeFrom');
+    const toInput = document.getElementById('paynixRangeTo');
+    if (min && max) {
+      fromInput.min = min; fromInput.max = max; fromInput.value = min;
+      toInput.min = min; toInput.max = max; toInput.value = max;
+    }
+  }
+
+  // Aggregates transactions for one merchant within [paynixRangeFrom, paynixRangeTo].
+  function computePaynixCommissionForMerchant(merchantId) {
+    if (!PAYNIX_COMMISSION_DATA) return null;
+    const rate = PAYNIX_COMMISSION_DATA.clients.find((c) => c.merchantId === merchantId);
+    if (!rate || !rate.hasData) return null;
+    let totalAmount = 0, totalCommission = 0, totalAkCommission = 0, successfulTxns = 0;
+    for (const [va, isoDate, amount] of PAYNIX_COMMISSION_DATA.transactions) {
+      if (va !== merchantId) continue;
+      if (paynixRangeFrom && (!isoDate || isoDate < paynixRangeFrom)) continue;
+      if (paynixRangeTo && (!isoDate || isoDate > paynixRangeTo)) continue;
+      const commission = calcMarginCommission(amount, rate);
+      const ak = calcAkCommission(amount, rate);
+      totalAmount += amount; totalCommission += commission; totalAkCommission += ak; successfulTxns += 1;
+    }
+    return {
+      totalAmount: Math.round(totalAmount * 100) / 100,
+      totalCommission: Math.round(totalCommission * 100) / 100,
+      totalAkCommission: Math.round(totalAkCommission * 100) / 100,
+      successfulTxns,
+    };
+  }
+
+  // Same margin/AK rules as calculate-paynix-commission.js — kept in sync manually.
+  function calcMarginCommission(amount, rate) {
+    if (amount >= 100 && amount <= 200 && rate.onboardedFlat100to200 != null && rate.resellerFlat100to200 != null) {
+      return rate.onboardedFlat100to200 - rate.resellerFlat100to200;
+    }
+    return (amount * (rate.onboardedPct - rate.resellerPct)) / 100;
+  }
+  function calcAkCommission(amount, rate) {
+    if (rate.akPct == null) return 0;
+    return (amount * rate.akPct) / 100;
+  }
+
+  // Aggregates every client with data for the ledger strip totals.
+  function computePaynixCommissionForRange() {
+    if (!PAYNIX_COMMISSION_DATA) return { totalCommission: 0, totalAkCommission: 0, clients: [] };
+    const rateByMerchant = new Map(PAYNIX_COMMISSION_DATA.clients.filter((c) => c.merchantId).map((c) => [c.merchantId, c]));
+    const perClient = new Map();
+    let totalCommission = 0, totalAkCommission = 0;
+    for (const [merchantId, isoDate, amount] of PAYNIX_COMMISSION_DATA.transactions) {
+      if (paynixRangeFrom && (!isoDate || isoDate < paynixRangeFrom)) continue;
+      if (paynixRangeTo && (!isoDate || isoDate > paynixRangeTo)) continue;
+      const rate = rateByMerchant.get(merchantId);
+      if (!rate) continue;
+      const commission = calcMarginCommission(amount, rate);
+      const ak = calcAkCommission(amount, rate);
+      totalCommission += commission; totalAkCommission += ak;
+      if (!perClient.has(merchantId)) perClient.set(merchantId, { ...rate, totalAmount: 0, totalCommission: 0, totalAkCommission: 0 });
+      const agg = perClient.get(merchantId);
+      agg.totalAmount += amount; agg.totalCommission += commission; agg.totalAkCommission += ak;
+    }
+    return {
+      totalCommission: Math.round(totalCommission * 100) / 100,
+      totalAkCommission: Math.round(totalAkCommission * 100) / 100,
+      clients: Array.from(perClient.values()),
+    };
   }
 
   async function fetchPaynixData() {
@@ -847,6 +978,7 @@
       const res = await fetch(paynixUrl, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Drive fetch failed: ${res.status} ${res.statusText}`);
       PAYNIX_DATA = await res.json();
+      await fetchPaynixCommissionData();
       setupPanel2.hidden = true;
       app2.hidden = false;
       renderPaynix();
@@ -868,10 +1000,20 @@
       ? 'generated ' + new Date(d.scrapedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
       : '';
     updateTabFreshness('tabPaynixFreshness', d.scrapedAt);
+
+    const periodLine = document.getElementById('paynixPeriodLine');
+    if (paynixRangeFrom && paynixRangeTo) {
+      periodLine.textContent = paynixRangeFrom === paynixRangeTo ? paynixRangeFrom : `${paynixRangeFrom} → ${paynixRangeTo}`;
+    } else if (!PAYNIX_COMMISSION_DATA) {
+      periodLine.textContent = 'Commission data not yet published — see paynixDownloadError note';
+    }
+
+    const commissionRange = computePaynixCommissionForRange();
     document.getElementById('paynixLedgerStrip').innerHTML = `
       <div class="ledger-cell"><div class="ledger-label">Active Merchants</div><div class="ledger-figure">${d.summary.activeMerchants ?? '-'}</div></div>
       <div class="ledger-cell"><div class="ledger-label">30-Day Payout Volume</div><div class="ledger-figure">${fmtINR(d.summary.last30Days.successVolume)}</div></div>
-      <div class="ledger-cell"><div class="ledger-label">Commission</div><div class="ledger-figure accent">${fmtINR2(d.summary.lifetimeCommission)}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Commission (selected range)</div><div class="ledger-figure accent">${fmtINR2(commissionRange.totalCommission)}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">AK Commission (selected range)</div><div class="ledger-figure accent">${fmtINR2(commissionRange.totalAkCommission)}</div></div>
     `;
 
     const failedAlert = document.getElementById('paynixFailedAlert');
@@ -895,6 +1037,9 @@
 
     const changeByMerchant = new Map((d.walletChanges || []).map((c) => [c.merchantId, c.delta]));
     const walletLogs = d.walletLogs || {};
+    const commissionByMerchant = new Map(
+      (PAYNIX_COMMISSION_DATA?.clients || []).filter((c) => c.merchantId).map((c) => [c.merchantId, c])
+    );
     const merchantTbody = document.getElementById('paynixMerchantTbody');
     const merchants = [...d.merchants].sort((a, b) => b.wallet - a.wallet);
     merchantTbody.innerHTML = merchants.map((m) => {
@@ -902,50 +1047,47 @@
       const addedCell = delta != null
         ? `<span style="color: ${delta >= 0 ? 'var(--success)' : 'var(--danger)'}">${delta > 0 ? '+' : ''}${fmtINR2(delta)}</span>`
         : '<span class="client-va">—</span>';
-      const log = walletLogs[m.merchantId];
-      const toggleCell = log && log.length
-        ? `<button class="btn-reset wallet-log-toggle" type="button" data-merchant="${m.merchantId}">Recent ▾</button>`
-        : '<span class="client-va">—</span>';
-      const detailRow = log && log.length ? `
-      <tr class="wallet-log-row" id="walletLog-${m.merchantId}" hidden>
-        <td colspan="6">
-          <table class="wallet-log-table">
-            <thead><tr><th>Request ID</th><th class="num">Amount (₹)</th><th>Method</th><th>UTR</th><th>Status</th><th>Created</th></tr></thead>
-            <tbody>
-              ${log.map((e) => `
-                <tr>
-                  <td class="client-va">${e.requestId || '-'}</td>
-                  <td class="num">${fmtINR2(e.amount)}</td>
-                  <td>${e.method || '-'}</td>
-                  <td class="client-va">${e.utr || '-'}</td>
-                  <td><span class="status-pill ${e.status === 'Approved' ? 'active' : 'other'}">${e.status || '-'}</span></td>
-                  <td class="client-va">${e.createdAt || '-'}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </td>
-      </tr>` : '';
+      const c = commissionByMerchant.get(m.merchantId);
+      const range = c ? computePaynixCommissionForMerchant(m.merchantId) : null;
+      const volumeCell = range ? fmtINR(range.totalAmount) : '<span class="client-va">no data</span>';
+      const commissionCell = range ? fmtINR2(range.totalCommission) : '<span class="client-va">no data</span>';
+      const akCell = range ? fmtINR2(range.totalAkCommission) : '<span class="client-va">no data</span>';
       return `
       <tr>
-        <td class="client-name">${m.merchantName}</td>
-        <td class="client-va">${m.merchantId}</td>
-        <td class="num commission-cell">${fmtINR2(m.wallet)}</td>
+        <td><div class="client-name">${m.merchantName}</div><div class="client-va">${m.merchantId}</div></td>
+        <td class="num">${volumeCell}</td>
+        <td class="num commission-cell">${commissionCell}</td>
+        <td class="num">${akCell}</td>
+        <td class="num">${fmtINR2(m.wallet)}</td>
         <td class="num">${addedCell}</td>
         <td><span class="status-pill ${m.status === 'Active' ? 'active' : 'other'}">${m.status}</span></td>
-        <td>${toggleCell}</td>
       </tr>
-      ${detailRow}
     `;
     }).join('');
 
-    merchantTbody.querySelectorAll('.wallet-log-toggle').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const row = document.getElementById('walletLog-' + btn.dataset.merchant);
-        row.hidden = !row.hidden;
-        btn.textContent = row.hidden ? 'Recent ▾' : 'Recent ▴';
-      });
-    });
+    // Consolidated wallet top-up log across all clients (replaces the old
+    // per-row dropdown toggle — client asked for one collated section
+    // instead of expanding each merchant row individually).
+    const walletLogTbody = document.getElementById('paynixWalletLogTbody');
+    const merchantNameById = new Map(d.merchants.map((m) => [m.merchantId, m.merchantName]));
+    const allLogEntries = [];
+    for (const [merchantId, entries] of Object.entries(walletLogs)) {
+      for (const e of entries || []) {
+        allLogEntries.push({ ...e, merchantId, merchantName: merchantNameById.get(merchantId) || merchantId });
+      }
+    }
+    allLogEntries.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    walletLogTbody.innerHTML = allLogEntries.length ? allLogEntries.map((e) => `
+      <tr>
+        <td class="client-name">${e.merchantName}</td>
+        <td class="client-va">${e.requestId || '-'}</td>
+        <td class="num">${fmtINR2(e.amount)}</td>
+        <td>${e.method || '-'}</td>
+        <td class="client-va">${e.utr || '-'}</td>
+        <td><span class="status-pill ${e.status === 'Approved' ? 'active' : 'other'}">${e.status || '-'}</span></td>
+        <td class="client-va">${e.createdAt || '-'}</td>
+      </tr>
+    `).join('') : '<tr class="empty-row"><td colspan="7">No wallet top-up activity captured.</td></tr>';
 
     const failedTbody = document.getElementById('paynixFailedTbody');
     if (!d.failedPayouts || d.failedPayouts.length === 0) {
@@ -960,6 +1102,221 @@
           <td class="client-va">${f.createdAt || '-'}</td>
         </tr>
       `).join('');
+    }
+  }
+
+  // ---- Download Excel (Paynix tab) --------------------------------------
+  function showPaynixDownloadError(msg) {
+    const el = document.getElementById('paynixDownloadError');
+    el.textContent = msg;
+    el.classList.add('show');
+  }
+  function clearPaynixDownloadError() {
+    const el = document.getElementById('paynixDownloadError');
+    el.textContent = '';
+    el.classList.remove('show');
+  }
+
+  async function downloadPaynixExcel() {
+    clearPaynixDownloadError();
+    if (!PAYNIX_COMMISSION_DATA) {
+      showPaynixDownloadError('Commission data not yet published for Paynix. Run the backend pipeline (download-paynix-merchant-reports + calculate-paynix + upload-to-drive) first.');
+      return;
+    }
+    if (!paynixRangeFrom || !paynixRangeTo) {
+      showPaynixDownloadError('Select a From/To date range first.');
+      return;
+    }
+
+    let availMin = null, availMax = null;
+    for (const [, isoDate] of PAYNIX_COMMISSION_DATA.transactions) {
+      if (!isoDate) continue;
+      if (!availMin || isoDate < availMin) availMin = isoDate;
+      if (!availMax || isoDate > availMax) availMax = isoDate;
+    }
+    if (!availMax || paynixRangeTo > availMax) {
+      showPaynixDownloadError(
+        `Data not available for the full selected range (${paynixRangeFrom} → ${paynixRangeTo}). ` +
+        `Backend has fetched data only up to ${availMax || 'no data yet'}. Click "↻ Refresh" or wait for the next backend run, then try again.`
+      );
+      return;
+    }
+    if (paynixRangeFrom < availMin) {
+      showPaynixDownloadError(`Backend data starts at ${availMin}; the selected From date (${paynixRangeFrom}) is earlier than any available data.`);
+      return;
+    }
+
+    const range = computePaynixCommissionForRange();
+    const clientsWithData = range.clients.filter((c) => c.totalAmount > 0);
+    const clientsNoData = PAYNIX_COMMISSION_DATA.clients.filter((c) => !c.hasData);
+    if (clientsWithData.length === 0) {
+      showPaynixDownloadError(`No transactions found for ${paynixRangeFrom} → ${paynixRangeTo}. Nothing to export.`);
+      return;
+    }
+
+    const btn = document.getElementById('paynixDownloadBtn');
+    btn.disabled = true;
+    btn.textContent = 'Generating…';
+    try {
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Paynix Commission');
+
+      const COLS = [
+        { key: 'sno', width: 6 }, { key: 'clientName', width: 42 },
+        { key: 'resellerPct', width: 12 }, { key: 'resellerFlat', width: 12 },
+        { key: 'onboardedPct', width: 12 }, { key: 'onboardedFlat', width: 12 },
+        { key: 'marginPct', width: 11 }, { key: 'volume', width: 16 }, { key: 'commission', width: 13 },
+        { key: 'akPct', width: 10 }, { key: 'akCommission', width: 14 },
+      ];
+      ws.columns = COLS;
+      const NUM_COLS = COLS.length;
+      const thin = { style: 'thin', color: { argb: 'FF000000' } };
+      const allBorders = { top: thin, left: thin, bottom: thin, right: thin };
+      const HEADER_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC6E0B4' } };
+      const COMMISSION_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
+      const AK_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFBDD7EE' } };
+
+      const TITLE = `Paynix Volume ${formatDateLabel(paynixRangeFrom)} to ${formatDateLabel(paynixRangeTo)}`;
+      ws.mergeCells(1, 1, 1, NUM_COLS);
+      const titleCell = ws.getCell(1, 1);
+      titleCell.value = TITLE;
+      titleCell.font = { bold: true, size: 12 };
+      titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      titleCell.border = allBorders;
+      ws.getRow(1).height = 20;
+
+      const headerLabels = [
+        'S.NO.', 'Client Name', 'Sumeet(reseller) Pricing', 'Sumeet(reseller) Pricing below 1000',
+        'Onboarded Pricing', 'Onboarded Pricing for 100-200', 'Diff Pricing',
+        `Volume Duration ${formatDateLabel(paynixRangeFrom)} to ${formatDateLabel(paynixRangeTo)}`, 'Commission',
+        'AK %', 'AK Commission',
+      ];
+      const headerRow = ws.getRow(2);
+      headerLabels.forEach((label, i) => {
+        const cell = headerRow.getCell(i + 1);
+        cell.value = label;
+        cell.font = { bold: true };
+        cell.fill = HEADER_FILL;
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        cell.border = allBorders;
+      });
+      headerRow.height = 45;
+
+      const sorted = [...clientsWithData].sort((a, b) => b.totalCommission - a.totalCommission);
+      let r = 3, sno = 1;
+      for (const c of sorted) {
+        const excelRow = ws.getRow(r);
+        excelRow.getCell(1).value = sno++;
+        excelRow.getCell(2).value = c.clientName;
+        excelRow.getCell(3).value = c.resellerPct != null ? c.resellerPct / 100 : null;
+        excelRow.getCell(4).value = c.resellerFlat100to200 != null ? `Rs ${c.resellerFlat100to200}` : '';
+        excelRow.getCell(5).value = c.onboardedPct != null ? c.onboardedPct / 100 : null;
+        excelRow.getCell(6).value = c.onboardedFlat100to200 != null ? `Rs ${c.onboardedFlat100to200}` : '';
+        excelRow.getCell(7).value = c.marginPct != null ? c.marginPct / 100 : null;
+        excelRow.getCell(8).value = Math.round(c.totalAmount * 100) / 100;
+        excelRow.getCell(9).value = Math.round(c.totalCommission * 100) / 100;
+        excelRow.getCell(10).value = c.akPct != null ? c.akPct / 100 : null;
+        excelRow.getCell(11).value = Math.round(c.totalAkCommission * 100) / 100;
+
+        excelRow.getCell(3).numFmt = '0.00%';
+        excelRow.getCell(5).numFmt = '0.00%';
+        excelRow.getCell(7).numFmt = '0.00%';
+        excelRow.getCell(8).numFmt = '#,##0';
+        excelRow.getCell(9).numFmt = '#,##0.00';
+        excelRow.getCell(10).numFmt = '0.00%';
+        excelRow.getCell(11).numFmt = '#,##0.00';
+
+        for (let cc = 1; cc <= NUM_COLS; cc++) {
+          const cell = excelRow.getCell(cc);
+          cell.border = allBorders;
+          cell.alignment = { horizontal: cc === 2 ? 'left' : 'center', vertical: 'middle' };
+        }
+        excelRow.getCell(9).fill = COMMISSION_FILL;
+        excelRow.getCell(9).font = { bold: true };
+        excelRow.getCell(11).fill = AK_FILL;
+        excelRow.getCell(11).font = { bold: true };
+        r++;
+      }
+
+      // Clients with no scraped data get a visible row instead of being
+      // silently omitted, per the data-availability guard pattern used
+      // throughout this dashboard.
+      for (const c of clientsNoData) {
+        const excelRow = ws.getRow(r);
+        excelRow.getCell(1).value = sno++;
+        excelRow.getCell(2).value = c.clientName + ' (no data available)';
+        excelRow.getCell(3).value = c.resellerPct != null ? c.resellerPct / 100 : null;
+        excelRow.getCell(4).value = c.resellerFlat100to200 != null ? `Rs ${c.resellerFlat100to200}` : '';
+        excelRow.getCell(5).value = c.onboardedPct != null ? c.onboardedPct / 100 : null;
+        excelRow.getCell(6).value = c.onboardedFlat100to200 != null ? `Rs ${c.onboardedFlat100to200}` : '';
+        excelRow.getCell(7).value = c.marginPct != null ? c.marginPct / 100 : null;
+        excelRow.getCell(10).value = c.akPct != null ? c.akPct / 100 : null;
+        excelRow.getCell(3).numFmt = '0.00%';
+        excelRow.getCell(5).numFmt = '0.00%';
+        excelRow.getCell(7).numFmt = '0.00%';
+        excelRow.getCell(10).numFmt = '0.00%';
+        for (let cc = 1; cc <= NUM_COLS; cc++) {
+          const cell = excelRow.getCell(cc);
+          cell.border = allBorders;
+          cell.alignment = { horizontal: cc === 2 ? 'left' : 'center', vertical: 'middle' };
+          cell.font = { italic: true, color: { argb: 'FF8891A5' } };
+        }
+        r++;
+      }
+
+      const totalRowIdx = r;
+      ws.mergeCells(totalRowIdx, 1, totalRowIdx, 7);
+      const totalLabelCell = ws.getCell(totalRowIdx, 1);
+      totalLabelCell.value = 'Total';
+      totalLabelCell.font = { bold: true };
+      totalLabelCell.alignment = { horizontal: 'right', vertical: 'middle' };
+      totalLabelCell.border = allBorders;
+      for (let cc = 2; cc <= 7; cc++) ws.getCell(totalRowIdx, cc).border = allBorders;
+
+      const totalVolume = clientsWithData.reduce((s, c) => s + c.totalAmount, 0);
+      const totalVolumeCell = ws.getCell(totalRowIdx, 8);
+      totalVolumeCell.value = Math.round(totalVolume * 100) / 100;
+      totalVolumeCell.numFmt = '#,##0';
+      totalVolumeCell.font = { bold: true };
+      totalVolumeCell.border = allBorders;
+      totalVolumeCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      const totalCommissionCell = ws.getCell(totalRowIdx, 9);
+      totalCommissionCell.value = range.totalCommission;
+      totalCommissionCell.numFmt = '#,##0.00';
+      totalCommissionCell.font = { bold: true };
+      totalCommissionCell.fill = COMMISSION_FILL;
+      totalCommissionCell.border = allBorders;
+      totalCommissionCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      ws.getCell(totalRowIdx, 10).border = allBorders;
+
+      const totalAkCell = ws.getCell(totalRowIdx, 11);
+      totalAkCell.value = range.totalAkCommission;
+      totalAkCell.numFmt = '#,##0.00';
+      totalAkCell.font = { bold: true };
+      totalAkCell.fill = AK_FILL;
+      totalAkCell.border = allBorders;
+      totalAkCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      ws.views = [{ state: 'frozen', ySplit: 2 }];
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Paynix_Commission_${paynixRangeFrom}_to_${paynixRangeTo}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      showPaynixDownloadError('Failed to generate the report: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '⬇ Download Excel';
     }
   }
 
@@ -1153,6 +1510,22 @@
     }
   });
   document.getElementById('paynixRefreshBtn').addEventListener('click', fetchPaynixData);
+  document.getElementById('paynixDownloadBtn').addEventListener('click', downloadPaynixExcel);
+  document.getElementById('paynixRangeFrom').addEventListener('change', (e) => {
+    paynixRangeFrom = e.target.value || null;
+    clearPaynixDownloadError();
+    if (PAYNIX_DATA) renderPaynix();
+  });
+  document.getElementById('paynixRangeTo').addEventListener('change', (e) => {
+    paynixRangeTo = e.target.value || null;
+    clearPaynixDownloadError();
+    if (PAYNIX_DATA) renderPaynix();
+  });
+  document.getElementById('paynixResetRangeBtn').addEventListener('click', () => {
+    initPaynixDateRange();
+    clearPaynixDownloadError();
+    if (PAYNIX_DATA) renderPaynix();
+  });
   document.getElementById('pixlerMerchantRefreshBtn').addEventListener('click', fetchPixlerMerchantData);
   document.getElementById('pixlerMerchantRangeFrom').addEventListener('change', (e) => {
     pixlerMerchantRangeFrom = e.target.value || null;

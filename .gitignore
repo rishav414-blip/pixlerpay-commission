@@ -16,7 +16,9 @@ data/gdrive-oauth-token.json
 website/commission-results.json
 website/paynix-results.json
 website/pixlerpay-merchant-results.json
+website/paynix-commission-results.json
 data/paynix-snapshot.json
 data/paynix-snapshot-previous.json
 data/pixlerpay-merchant-snapshot.json
+data/paynix-merchant-reports/
 !data/.gitkeep

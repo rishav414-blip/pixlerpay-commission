@@ -263,6 +263,108 @@ round-trip, no separate scrape triggered.
   100-200" columns blank in every downloaded file. Fixed by adding those
   two fields to the per-client aggregate object.
 
+## Paynix commission (margin + AK), added 2026-07-13
+
+The Paynix tab originally only showed wallet balance + the single
+aggregate `lifetimeCommission` Paynix itself reports (no math needed, no
+per-client breakdown). The client provided their own rate card for Paynix
+(Google Sheet, not this repo) with per-client Sumeet/Onboarded rates plus
+a new **AK%** — a separate downstream-partner cut, analogous to margin
+commission but always a flat percentage of amount (no 100-200 flat-band
+override defined for AK). This required real new backend data collection,
+not just UI work — the reseller dashboard never exposed per-merchant
+transaction volume, only wallet balance/status.
+
+**New data files:**
+- `data/paynix-commission-rates.json` — all 26 clients from the client's
+  sheet (Sumeet%, Sumeet-flat, Onboarded%, Onboarded-flat, AK%, and a
+  `group` field for reference only — the sheet's "[merged] X" labels are
+  AK-settlement groupings, not Paynix account merges; each client with a
+  `merchantId` already has its own individual Paynix merchant account).
+  13 of 26 clients have no `merchantId` — either not yet live on Paynix,
+  or a name that didn't match any of the 13 active merchant records
+  scraped from the reseller dashboard (matched by hand, not fuzzy-matched
+  — if a client's Paynix account goes live, add their `merchantId` here
+  manually by cross-checking `website/paynix-results.json`'s `merchants`
+  array).
+- `data/paynix-merchant-reports/<merchantId>.json` — full payout history
+  per merchant (gitignored), from the new scraper below.
+- `website/paynix-commission-results.json` — calculated output (Drive
+  file ID `GOOGLE_DRIVE_PAYNIX_COMMISSION_FILE_ID` in `.env`, also
+  hardcoded as `PAYNIX_COMMISSION_FILE_ID` in `docs/index.html`).
+
+**New scripts:**
+- `scripts/download-paynix-merchant-reports.js` (`npm run
+  download-paynix-merchant-reports`) — logs into each of the 9 known
+  individual merchant portals (`data/paynix-merchant-logins.json`) and
+  exports full payout history via the portal's own Export button —
+  **deliberately not** scraping the reseller portal's per-client filtered
+  view, since that portal has no export and would mean paginating through
+  13 merchants' transaction tables on every refresh (fragile, slow — the
+  same category of problem that already broke N V CONNECT's PixlerPay
+  scrape). Confirmed with the client this is the right tradeoff.
+  Covers 9 of 13 rate-card clients with a known Paynix account; the
+  other 4 (APAS TECH POINT, PPAY SOLUTION, Global Books Trading, Define
+  Enterprises — same gap as PixlerPay-side limitation #7) have no
+  merchant-portal login yet, so show "no data available" rather than a
+  silent zero.
+- `scripts/calculate-paynix-commission.js` (`npm run calculate-paynix`) —
+  joins the reports to the rate card, computes margin commission (same
+  percentage-with-100-200-flat-band-override rule as
+  `calculate-commission.js`) **and** AK commission per transaction, writes
+  a `transactions: [merchantId, isoDate, amount]` log for client-side
+  date-range recompute. Any rate-card client with no `merchantId` or no
+  report file gets `hasData: false` instead of being computed as zero.
+- Both wired into `npm run all` (after `download-paynix-wallets` /
+  `download-pixlerpay-merchant`, before `upload-to-drive`) and into
+  `upload-to-drive.js` as a 4th upload target.
+
+**Dashboard (Paynix tab) changes:**
+- Added From/To range filters (same UX as the PixlerPay tab), wired to a
+  new "Commission by Client" table showing Volume / Commission / AK
+  Commission / Wallet Balance / Wallet Change / Status per client —
+  replacing the old wallet-only table. `computePaynixCommissionForRange()`
+  / `computePaynixCommissionForMerchant()` in `docs/index.html` mirror
+  `calculate-paynix-commission.js`'s math client-side (kept in sync by
+  hand, same pattern as the PixlerPay tab's `computeForRange()`).
+- Added a **Download Excel** button, same data-availability guard pattern
+  as the PixlerPay one, with columns for AK% and AK Commission (yellow =
+  margin commission, blue = AK commission, in both the live table styling
+  intent and the exported file). Clients with no data show as an
+  italicized "(no data available)" row in the export rather than being
+  silently dropped, so the client can see the coverage gap.
+- **Removed the per-row "Recent ▾" wallet-log dropdown toggle** (was one
+  expand/collapse per merchant row) and replaced it with a single
+  consolidated **"Recent Wallet Top-Ups — All Clients"** table below the
+  commission table — all merchants' `walletLogs` entries pooled into one
+  list, sorted by date descending, with a Client column added to
+  distinguish rows. Per the client's explicit request: "find another way
+  to show the collated data for all clients in 1 section."
+
+**Still open / not done:**
+- The 13 rate-card clients without a `merchantId` (WESURE, WESERV,
+  Elleaura, EIENON, SRKA, SOSHY, INDILOXY, N V CONNECT, XPASSPHERE,
+  RUSTIC ODYSSEYS, FINFLEX, Harmonious, and one of the two Global
+  Books/PPAY-type near-duplicates if a name mismatch was missed) show "no
+  data available" everywhere. Close this by adding their `merchantId` once
+  live on Paynix, or their merchant-portal login if only 4 are truly
+  missing logins.
+- The sheet's per-client notes ("0.1% above this", "Base rate as 0.9%",
+  "divided by 3", "by 3", "all own", "by 2") were explicitly told to be
+  ignored by the client — not encoded anywhere. If that changes, ask what
+  they mean before implementing (same caution as the PixlerPay "Commission
+  by client"/"NXT commission" columns — these tend to be manual
+  downstream-settlement logic, not simple formulas).
+- `GOOGLE_DRIVE_PAYNIX_COMMISSION_FILE_ID` was added to local `.env` but
+  **not yet mirrored into the GitHub Actions `ENV_FILE` secret** — until
+  that's updated (`gh secret set ENV_FILE --repo rishav414-blip/pixlerpay-commission < .env`),
+  the automated CI pipeline will keep re-creating a NEW Drive file each
+  scheduled run instead of updating this one in place (same footgun the
+  "known file ID" pattern elsewhere in this file exists to avoid). Also
+  needs a new `PAYNIX_MERCHANT_LOGINS`-style secret check — actually reuses
+  the existing `PAYNIX_MERCHANT_LOGINS` secret already set for wallet
+  scraping, no new secret needed there.
+
 ## Telegram alerts — live
 
 Bot: **@payout_alert_autobot**. `scripts/telegram-alert.js` runs as the
