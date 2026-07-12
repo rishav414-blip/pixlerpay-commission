@@ -49,6 +49,15 @@ minutes since this repo is public):
   accounts, Paynix reseller + 9 merchant wallet logs, PixlerPay's own
   merchant account (full payout export), uploads everything to Drive, then
   runs the Telegram alert step. Takes ~5-10 min.
+  **Added 2026-07-13**: now also exports full payout history from the same
+  9 Paynix merchant portals (`download-paynix-merchant-reports`, for the
+  margin+AK commission calc) — some of these accounts have thousands of
+  payouts (DIGIROUTE ~9.5k, Sunshine Global ~5.5k, Curiobyte ~6k), so this
+  likely pushes total runtime noticeably past the ~5-10 min figure above.
+  Not yet re-measured against real CI run history — worth checking after a
+  few scheduled runs, and reconsidering whether this belongs in the
+  30-min `refresh.yml` vs a slower/separate schedule if it's making the
+  already-unreliable `schedule` cadence (see below) worse.
 - **`.github/workflows/wallet-alert.yml`** — every 15 min (`*/15 * * * *`)
   + manual dispatch. Fast path scoped to just the Paynix side (reseller
   scrape + 9 merchant wallet logs) so new wallet top-up requests get
