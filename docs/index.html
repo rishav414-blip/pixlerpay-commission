@@ -12,6 +12,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>PixlerPay Commission Ledger</title>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 </head>
 <body>
 <style>
@@ -109,6 +110,12 @@
   .idle-note { margin-top: 22px; padding: 14px 18px; border: 1px dashed var(--border); border-radius: 3px; font-size: 12.5px; color: var(--text-muted); display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
   .idle-note strong { color: var(--warn); font-weight: 600; }
 
+  .btn-download { background: var(--accent-soft); border: 1px solid var(--accent); color: var(--accent); border-radius: 3px; padding: 9px 13px; font-size: 13px; cursor: pointer; font-family: var(--sans); font-weight: 600; }
+  .btn-download:hover { background: var(--accent); color: var(--bg); }
+  .btn-download:disabled { opacity: 0.5; cursor: not-allowed; background: var(--accent-soft); color: var(--accent); }
+  .download-error { margin-top: 10px; padding: 10px 14px; border: 1px solid var(--danger); border-radius: 3px; font-size: 12.5px; color: var(--danger); background: rgba(207, 97, 97, 0.1); display: none; }
+  .download-error.show { display: block; }
+
   .setup-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 3px; padding: 24px; margin-bottom: 24px; font-size: 13.5px; line-height: 1.6; }
   .setup-panel h2 { font-family: var(--serif); font-size: 18px; margin: 0 0 10px; }
   .setup-panel code { background: var(--surface-2); padding: 1px 6px; border-radius: 3px; font-size: 12.5px; }
@@ -195,8 +202,10 @@
       </label>
       <button class="btn-reset" id="resetBtn" type="button">Reset filters</button>
       <button class="btn-refresh" id="refreshBtn" type="button">↻ Refresh</button>
+      <button class="btn-download" id="downloadBtn" type="button">⬇ Download Excel</button>
       <span class="toolbar-count" id="rowCount"></span>
     </div>
+    <div class="download-error" id="downloadError"></div>
 
     <div class="table-scroll">
       <table>
@@ -417,7 +426,8 @@
       if (!perClient.has(va)) {
         perClient.set(va, {
           clientName: rate.clientName, va, onboardedPct: rate.onboardedPct, resellerPct: rate.resellerPct,
-          marginPct: rate.marginPct, successfulTxns: 0, totalAmount: 0, totalCommission: 0,
+          marginPct: rate.marginPct, resellerFlat100to200: rate.resellerFlat100to200, onboardedFlat100to200: rate.onboardedFlat100to200,
+          successfulTxns: 0, totalAmount: 0, totalCommission: 0,
         });
       }
       const agg = perClient.get(va);
@@ -562,16 +572,249 @@
 
   document.getElementById('searchInput').addEventListener('input', (e) => { search = e.target.value; renderTable(); });
   document.getElementById('minCommission').addEventListener('input', (e) => { minCommission = Number(e.target.value) || 0; renderTable(); });
-  document.getElementById('rangeFrom').addEventListener('change', (e) => { rangeFrom = e.target.value || null; renderAll(); });
-  document.getElementById('rangeTo').addEventListener('change', (e) => { rangeTo = e.target.value || null; renderAll(); });
+  document.getElementById('rangeFrom').addEventListener('change', (e) => { rangeFrom = e.target.value || null; clearDownloadError(); renderAll(); });
+  document.getElementById('rangeTo').addEventListener('change', (e) => { rangeTo = e.target.value || null; clearDownloadError(); renderAll(); });
   document.getElementById('resetBtn').addEventListener('click', () => {
     search = ''; minCommission = 0;
     document.getElementById('searchInput').value = '';
     document.getElementById('minCommission').value = '';
     initDateRange();
+    clearDownloadError();
     renderAll();
   });
   document.getElementById('refreshBtn').addEventListener('click', fetchData);
+
+  // ---- Download Excel (PixlerPay tab) -----------------------------------
+  // Client VAs from the very first reference sheet the client shared
+  // ("Volume till 30th June") — any client outside this set gets flagged
+  // "(New Client)" in the exported report. Keep in sync with
+  // scripts/generate-commission-report.cjs's ORIGINAL_VAS if the client
+  // ever re-baselines what counts as already-known.
+  const ORIGINAL_VAS = new Set([
+    'SAM256', 'SAM262', 'SAM288', 'SAM295', 'SAM286', 'SAM294',
+    'SAM349', 'SAM298', 'SAM299', 'SAM328', 'SAM348', 'SAM358', 'SAM353',
+  ]);
+
+  // "Commission by client" / "NXT commission" — per-client mapping taken
+  // directly from the client's own manually-edited report (2026-07-12).
+  // Only these specific clients get a value; every other client's cells
+  // stay blank, even if their onboarded rate matches one of the tiers
+  // below (confirmed by the client — not a blanket rate-tier rule). Keep
+  // in sync with scripts/generate-commission-report.cjs.
+  const COMMISSION_BY_CLIENT_VAS = new Set(['SAM255', 'SAM256', 'SAM288', 'SAM295']); // WESERV, SERVM, Emervex, Curiobyte
+  const NXT_COMMISSION_VAS = new Set(['SAM286', 'SAM298', 'SAM299', 'SAM328', 'SAM338', 'SAM348', 'SAM358']); // RASHEEYA, N V CONNECT, BITNEXY, GLOBAL BOOKS, SOSHY, PPAY, suvika
+
+  function calcSplitCommissions(va, volume, onboardedPct) {
+    const pct = Math.round(onboardedPct * 100) / 100;
+    if (COMMISSION_BY_CLIENT_VAS.has(va)) {
+      const rate = pct === 1.30 ? 0.002 : pct === 1.10 ? 0.001 : null;
+      return { commissionByClient: rate != null ? volume * rate : null, nxtCommission: null };
+    }
+    if (NXT_COMMISSION_VAS.has(va)) {
+      return { commissionByClient: null, nxtCommission: pct === 1.20 ? volume * 0.001 : null };
+    }
+    return { commissionByClient: null, nxtCommission: null };
+  }
+
+  function getAvailableDateBounds() {
+    let min = null, max = null;
+    for (const [, isoDate] of DATA.transactions) {
+      if (!isoDate) continue;
+      if (!min || isoDate < min) min = isoDate;
+      if (!max || isoDate > max) max = isoDate;
+    }
+    return { min, max };
+  }
+
+  function formatDateLabel(iso) {
+    const [y, m, dd] = iso.split('-');
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${parseInt(dd, 10)} ${months[parseInt(m, 10) - 1]}`;
+  }
+
+  function showDownloadError(msg) {
+    const el = document.getElementById('downloadError');
+    el.textContent = msg;
+    el.classList.add('show');
+  }
+  function clearDownloadError() {
+    const el = document.getElementById('downloadError');
+    el.textContent = '';
+    el.classList.remove('show');
+  }
+
+  async function downloadPixlerExcel() {
+    clearDownloadError();
+    if (!DATA || !rangeFrom || !rangeTo) {
+      showDownloadError('Select a From/To date range first.');
+      return;
+    }
+
+    // Data-availability guard: the backend scrape only covers up to
+    // DATA's latest transaction date. If the requested range extends past
+    // that, the report would silently under-report — refuse and tell the
+    // user instead, per their explicit request.
+    const { min: availMin, max: availMax } = getAvailableDateBounds();
+    if (!availMax || rangeTo > availMax) {
+      showDownloadError(
+        `Data not available for the full selected range (${rangeFrom} → ${rangeTo}). ` +
+        `Backend has fetched data only up to ${availMax || 'no data yet'}. ` +
+        `Click "↻ Refresh" to pull the latest synced snapshot, or wait for the next automated backend run, then try again.`
+      );
+      return;
+    }
+    if (rangeFrom < availMin) {
+      showDownloadError(`Backend data starts at ${availMin}; the selected From date (${rangeFrom}) is earlier than any available data.`);
+      return;
+    }
+
+    const range = computeForRange();
+    if (range.clients.length === 0) {
+      showDownloadError(`No transactions found for ${rangeFrom} → ${rangeTo}. Nothing to export.`);
+      return;
+    }
+
+    const btn = document.getElementById('downloadBtn');
+    btn.disabled = true;
+    btn.textContent = 'Generating…';
+    try {
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Commission');
+
+      const COLS = [
+        { key: 'sno', width: 6 }, { key: 'clientName', width: 42 }, { key: 'va', width: 10 },
+        { key: 'resellerPct', width: 12 }, { key: 'resellerFlat', width: 12 },
+        { key: 'onboardedPct', width: 12 }, { key: 'onboardedFlat', width: 12 },
+        { key: 'marginPct', width: 11 }, { key: 'volume', width: 16 }, { key: 'commission', width: 13 },
+        { key: 'commissionByClient', width: 15 }, { key: 'nxtCommission', width: 15 },
+      ];
+      ws.columns = COLS;
+      const NUM_COLS = COLS.length;
+      const thin = { style: 'thin', color: { argb: 'FF000000' } };
+      const allBorders = { top: thin, left: thin, bottom: thin, right: thin };
+      const HEADER_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC6E0B4' } };
+      const COMMISSION_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
+
+      const TITLE = `Volume ${formatDateLabel(rangeFrom)} to ${formatDateLabel(rangeTo)}`;
+      ws.mergeCells(1, 1, 1, NUM_COLS);
+      const titleCell = ws.getCell(1, 1);
+      titleCell.value = TITLE;
+      titleCell.font = { bold: true, size: 12 };
+      titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      titleCell.border = allBorders;
+      ws.getRow(1).height = 20;
+
+      const headerLabels = [
+        'S.NO.', 'Client Name', 'VA', 'Sumeet(reseller) Pricing', 'Sumeet(reseller) Pricing below 1000',
+        'Onboarded Pricing', 'Onboarded Pricing for 100-200', 'Diff Pricing',
+        `Volume Duration ${formatDateLabel(rangeFrom)} to ${formatDateLabel(rangeTo)}`, 'Commission',
+        'Commission by client', 'NXT commission ',
+      ];
+      const headerRow = ws.getRow(2);
+      headerLabels.forEach((label, i) => {
+        const cell = headerRow.getCell(i + 1);
+        cell.value = label;
+        cell.font = { bold: true };
+        cell.fill = HEADER_FILL;
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        cell.border = allBorders;
+      });
+      headerRow.height = 45;
+
+      const sortedClients = [...range.clients].sort((a, b) => a.va.localeCompare(b.va));
+      let r = 3, sno = 1;
+      let totalByClient = 0, totalNxt = 0;
+      for (const c of sortedClients) {
+        const excelRow = ws.getRow(r);
+        const name = c.clientName + (ORIGINAL_VAS.has(c.va) ? '' : ' (New Client)');
+        const split = calcSplitCommissions(c.va, c.totalAmount, c.onboardedPct);
+        totalByClient += split.commissionByClient || 0;
+        totalNxt += split.nxtCommission || 0;
+
+        excelRow.getCell(1).value = sno++;
+        excelRow.getCell(2).value = name;
+        excelRow.getCell(3).value = c.va;
+        excelRow.getCell(4).value = c.resellerPct != null ? c.resellerPct / 100 : null;
+        excelRow.getCell(5).value = c.resellerFlat100to200 != null ? `Rs ${c.resellerFlat100to200}` : '';
+        excelRow.getCell(6).value = c.onboardedPct != null ? c.onboardedPct / 100 : null;
+        excelRow.getCell(7).value = c.onboardedFlat100to200 != null ? `Rs ${c.onboardedFlat100to200}` : '';
+        excelRow.getCell(8).value = c.marginPct != null ? c.marginPct / 100 : null;
+        excelRow.getCell(9).value = c.totalAmount;
+        excelRow.getCell(10).value = c.totalCommission;
+        excelRow.getCell(11).value = split.commissionByClient != null ? Math.round(split.commissionByClient * 100) / 100 : null;
+        excelRow.getCell(12).value = split.nxtCommission != null ? Math.round(split.nxtCommission * 100) / 100 : null;
+
+        excelRow.getCell(4).numFmt = '0.00%';
+        excelRow.getCell(6).numFmt = '0.00%';
+        excelRow.getCell(8).numFmt = '0.00%';
+        excelRow.getCell(9).numFmt = '#,##0';
+        excelRow.getCell(10).numFmt = '#,##0.00';
+        excelRow.getCell(11).numFmt = '#,##0.00';
+        excelRow.getCell(12).numFmt = '#,##0.00';
+
+        for (let cc = 1; cc <= NUM_COLS; cc++) {
+          const cell = excelRow.getCell(cc);
+          cell.border = allBorders;
+          cell.alignment = { horizontal: cc === 2 ? 'left' : 'center', vertical: 'middle' };
+        }
+        excelRow.getCell(10).fill = COMMISSION_FILL;
+        excelRow.getCell(10).font = { bold: true };
+        r++;
+      }
+
+      const totalRowIdx = r;
+      ws.mergeCells(totalRowIdx, 1, totalRowIdx, 9);
+      const totalLabelCell = ws.getCell(totalRowIdx, 1);
+      totalLabelCell.value = 'Total';
+      totalLabelCell.font = { bold: true };
+      totalLabelCell.alignment = { horizontal: 'right', vertical: 'middle' };
+      totalLabelCell.border = allBorders;
+      for (let cc = 2; cc <= 9; cc++) ws.getCell(totalRowIdx, cc).border = allBorders;
+
+      const totalCommissionCell = ws.getCell(totalRowIdx, 10);
+      totalCommissionCell.value = range.totalCommission;
+      totalCommissionCell.numFmt = '#,##0.00';
+      totalCommissionCell.font = { bold: true };
+      totalCommissionCell.fill = COMMISSION_FILL;
+      totalCommissionCell.border = allBorders;
+      totalCommissionCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      const totalByClientCell = ws.getCell(totalRowIdx, 11);
+      totalByClientCell.value = Math.round(totalByClient * 100) / 100;
+      totalByClientCell.numFmt = '#,##0.00';
+      totalByClientCell.font = { bold: true };
+      totalByClientCell.border = allBorders;
+      totalByClientCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      const totalNxtCell = ws.getCell(totalRowIdx, 12);
+      totalNxtCell.value = Math.round(totalNxt * 100) / 100;
+      totalNxtCell.numFmt = '#,##0.00';
+      totalNxtCell.font = { bold: true };
+      totalNxtCell.border = allBorders;
+      totalNxtCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      ws.views = [{ state: 'frozen', ySplit: 2 }];
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `PixlerPay_Commission_${rangeFrom}_to_${rangeTo}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      showDownloadError('Failed to generate the report: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '⬇ Download Excel';
+    }
+  }
+
+  document.getElementById('downloadBtn').addEventListener('click', downloadPixlerExcel);
   document.querySelectorAll('thead th button').forEach((btn) => {
     btn.addEventListener('click', () => {
       const key = btn.dataset.key;

@@ -1,6 +1,6 @@
 # Handoff — PixlerPay / Paynix Commission Dashboard
 
-Last updated: 2026-07-12
+Last updated: 2026-07-12 (added periodic commission Excel report, see below)
 
 ## What this project is
 
@@ -128,6 +128,141 @@ uploads, alerts) on every run, since N V CONNECT ACROSS's broken portal
 fails predictably every time. Now only exits nonzero if *every* account
 fails; a partial failure is logged but doesn't block the rest.
 
+## Periodic PixlerPay commission Excel report (recurring, every ~10 days)
+
+The client wants a formatted Excel commission report for PixlerPay only,
+covering a rolling window (first requested: 1st-10th July; will recur for
+each subsequent ~10-day period). It must visually match their own
+reference sheet exactly: title row merged across all columns ("Volume
+<start> to <end>"), green header row with wrapped labels, thin borders on
+every cell, yellow-highlighted Commission column, bold Total row.
+
+**One command does the whole thing:**
+
+```powershell
+npm run commission-report -- <START:YYYY-MM-DD> <END:YYYY-MM-DD> [outputPath]
+# example for the next cycle:
+npm run commission-report -- 2026-07-11 2026-07-20
+```
+
+Script: `scripts/generate-commission-report.cjs`. What it does:
+
+1. **Fetches live per-transaction data straight from Drive**
+   (`GOOGLE_DRIVE_RESULTS_FILE_ID` + `GOOGLE_DRIVE_API_KEY` from `.env`) —
+   deliberately does NOT read local `website/commission-results.json` or
+   `data/*.csv`, because those only reflect whatever was last downloaded
+   to this machine and go stale between automated runs (this bit the
+   first version of this report: local copy was 3 days stale and silently
+   missing a client's transactions/showing a lower total than the live
+   dashboard).
+2. Filters the `transactions: [va, isoDate, amount]` array to the given
+   date range (inclusive).
+3. Recomputes commission **per transaction**, replicating
+   `scripts/calculate-commission.js`'s exact rule: percentage margin
+   (`onboardedPct - resellerPct`) on the amount, EXCEPT a flat-rate
+   override (`onboardedFlat100to200 - resellerFlat100to200`) for any
+   transaction with `100 <= amount <= 200`. **This must stay in sync with
+   `calculate-commission.js` if that file's logic ever changes** — an
+   earlier version of this report used `totalVolume × marginPct` (ignoring
+   the flat-band override) and came out ~₹3,300 short of the live
+   dashboard's total for the same range; per-transaction recomputation is
+   what reconciled it exactly.
+4. Flags any client whose VA isn't in the hardcoded `ORIGINAL_VAS` set
+   (the 13 VAs from the client's very first reference sheet) with
+   `" (New Client)"` appended to their name — this is how "check if a new
+   client has been added" gets answered going forward. **Update
+   `ORIGINAL_VAS` in the script if the client ever re-baselines what
+   counts as already-known** (otherwise every already-flagged client will
+   keep showing "(New Client)" forever).
+5. Writes the formatted `.xlsx` via `exceljs` (not the `xlsx` package —
+   `xlsx`'s free/community build cannot write cell colors/borders/merges,
+   which is why `exceljs` was added as a dependency specifically for this
+   script).
+6. Default output path is
+   `../PixlerPay_Commission_<START>_to_<END>.xlsx` (i.e. one level up,
+   in `Personal calculation/`, sibling to this repo folder) — pass a
+   third argument to override.
+
+**Known gotcha**: if the target `.xlsx` is open in Excel when the script
+runs, the write fails with `EBUSY: resource busy or locked` — close the
+file first.
+
+**Data freshness caveat**: the report is only as fresh as the last
+successful pipeline run feeding Drive (see the Automation section above
+for why that cadence is currently unreliable, ~hourly/worse overnight,
+not the configured 15/30 min). If a requested end date is more recent
+than the latest transaction in the live snapshot, the script logs a
+warning naming the actual latest date available — check that warning
+before treating the report as covering the full requested range.
+
+### Extra columns: "Commission by client" / "NXT commission"
+
+Added 2026-07-12 after the client manually edited a generated report and
+added these two columns by hand. **This is a per-client mapping, not a
+rate-tier formula** — reverse-engineered by tabulating which specific
+clients had a value filled in, matching the ratio of that value to their
+volume, and confirming with the client that this exact per-client mapping
+(not a blanket "same onboarded rate = same treatment" rule) is what to
+keep applying:
+
+- `COMMISSION_BY_CLIENT_VAS` (SAM255 WESERV, SAM256 SERVM, SAM288 Emervex,
+  SAM295 Curiobyte) → **Commission by client** = volume × 0.20% if their
+  onboarded rate is 1.30%, or volume × 0.10% if 1.10%.
+- `NXT_COMMISSION_VAS` (SAM286 RASHEEYA, SAM298 N V CONNECT, SAM299
+  BITNEXY, SAM328 GLOBAL BOOKS, SAM338 SOSHY, SAM348 PPAY, SAM358 suvika)
+  → **NXT commission** = volume × 0.10% if their onboarded rate is 1.20%.
+- Every other client (EIENON, SRKA, DATSHA, XPASSPHERE, and any future
+  client not in either set above) → **both columns blank**, even if their
+  onboarded rate matches one of the tiers above. This was confirmed
+  deliberately — do not "fill the gaps" by applying the tier rule
+  universally, that was tried and explicitly rejected.
+- **If a new client needs one of these columns**, add their VA to the
+  right set in **both** `scripts/generate-commission-report.cjs` and the
+  `docs/index.html` download-button script (kept as two separate
+  hardcoded copies since the browser can't `require()` the Node script —
+  they must be edited together).
+- What these two columns actually represent (which downstream party
+  "client" and "NXT" are) was never explained by the client — just
+  treated as a fixed formula per their instruction. If it ever needs to
+  change, ask what the columns mean before touching the mapping.
+
+## Download Excel button (PixlerPay tab, docs/index.html)
+
+Lets the user generate the same formatted report as
+`generate-commission-report.cjs` directly from the browser, for whatever
+From/To range is currently selected on the PixlerPay tab — no server
+round-trip, no separate scrape triggered.
+
+- Uses `ExcelJS` loaded via CDN (`<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js">`
+  in `<head>`) since GitHub Pages is a real website (unlike a Claude
+  Artifact) and external requests aren't CSP-blocked here. The free `xlsx`
+  package can't do cell colors/borders, which is why this needed a
+  different library than what's used elsewhere for CSV parsing.
+- **Reuses the page's existing Drive-fetched `DATA`** (the same
+  `fetchData()`/`computeForRange()` the table already uses) — does NOT
+  trigger any new backend scrape or fetch. This was a deliberate
+  correction: an earlier version of this feature accidentally kicked off
+  a full local `npm run all` pipeline run when wiring this up, which the
+  client explicitly said not to do — "use the existing drive process
+  only."
+- **Data-availability guard**: before generating, compares the selected
+  `rangeTo` against the latest transaction date actually present in
+  `DATA.transactions`. If the range extends past what's been scraped, it
+  shows a red error banner (`#downloadError`) explaining what's missing
+  and suggesting Refresh — it does not silently generate a partial/wrong
+  report. Same check for `rangeFrom` being earlier than the earliest
+  available data.
+- Mirrors `generate-commission-report.cjs`'s exact column set, formatting,
+  and the "Commission by client"/"NXT commission" per-client mapping
+  above — **the two are hand-kept in sync**, there's no shared module
+  between the Node script and the browser script.
+- `computeForRange()` (used by both the table and the download) had a gap
+  fixed alongside this: it wasn't carrying `resellerFlat100to200` /
+  `onboardedFlat100to200` through from `DATA.clients`, which would have
+  made the "Sumeet(reseller) Pricing below 1000" / "Onboarded Pricing for
+  100-200" columns blank in every downloaded file. Fixed by adding those
+  two fields to the per-client aggregate object.
+
 ## Telegram alerts — live
 
 Bot: **@payout_alert_autobot**. `scripts/telegram-alert.js` runs as the
@@ -226,6 +361,7 @@ pixlerpay-commission/
 │   ├── download-paynix.js        # Paynix reseller: login + scrape + diff
 │   ├── download-paynix-merchant-wallets.js  # Paynix: 9 merchant wallet "Load Requests" logs
 │   ├── download-pixlerpay-merchant.js  # PixlerPay's own Paynix merchant account
+│   ├── generate-commission-report.cjs  # formatted PixlerPay Excel report for any date range (npm run commission-report)
 │   ├── telegram-alert.js         # sends alerts for anything new, via Telegram Bot API
 │   ├── upload-to-drive.js        # push all results JSONs to Drive (OAuth)
 │   ├── gdrive-oauth-setup.js     # one-time OAuth consent flow
