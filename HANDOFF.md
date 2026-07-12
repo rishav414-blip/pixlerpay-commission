@@ -1,6 +1,6 @@
 # Handoff — PixlerPay / Paynix Commission Dashboard
 
-Last updated: 2026-07-11
+Last updated: 2026-07-12
 
 ## What this project is
 
@@ -56,6 +56,48 @@ minutes since this repo is public):
   or the 700+ row payout export every 15 min. Takes ~2-3 min.
 
 Both have `concurrency` groups so overlapping runs don't pile up.
+
+**⚠ Diagnosed 2026-07-12: GitHub's `schedule` trigger does not honor the
+configured interval.** Measured against real run history (00:00-07:16 UTC
+that day): `refresh.yml` (every 30 min configured) actually fired **2
+times** (~13% of the ~15 expected); `wallet-alert.yml` (every 15 min
+configured) fired **3 times** (~10% of the ~29 expected). Real gaps
+between runs were 55-75 min typically, up to 3.5 hours overnight. This is
+GitHub Actions' documented best-effort behavior for `schedule` events —
+not a bug in these workflow files, and not a disabled-workflow issue
+(confirmed both `state: active` via `gh api .../actions/workflows`).
+Telling evidence: every *manual*/API-triggered dispatch during setup and
+testing started within ~9 seconds — only `schedule`-triggered runs are
+delayed, so `workflow_dispatch` itself is reliable, the internal cron
+queue is what's throttled.
+
+**Fix in progress, chosen approach**: an external free cron service
+(cron-job.org) calling GitHub's REST API to trigger `workflow_dispatch`
+on a real schedule, bypassing GitHub's internal `schedule` queue entirely
+(dispatch-triggered runs are not subject to the same delay). Requires:
+1. A fine-grained GitHub PAT scoped to only this repo, only
+   `Actions: Read and write` (created via
+   github.com/settings/tokens?type=beta, not yet done as of this writing).
+2. Two cron-job.org jobs (free account, not yet created as of this
+   writing), each a `POST` to
+   `https://api.github.com/repos/rishav414-blip/pixlerpay-commission/actions/workflows/<workflow-file>/dispatches`
+   with header `Authorization: Bearer <PAT>` and body `{"ref":"master"}`
+   — one per workflow, at 15-min and 30-min intervals respectively.
+3. Once confirmed firing reliably, the `schedule:` blocks in both
+   workflow YAML files can be removed (or left as a redundant fallback —
+   harmless either way since they're additive, not conflicting).
+
+**Until that's done**, treat the real cadence as "roughly hourly,
+sometimes much longer overnight" rather than 15/30 min — this affects how
+fresh the dashboard data and alerts actually are day to day.
+
+**Known side-effect of the above, not yet fixed**: the dashboard's
+"stale" badge threshold (`docs/index.html`, `STALE_THRESHOLD_MS`) is set
+to 20 minutes, which assumed the configured 15/30 min cadence would
+roughly hold. Given the real ~60-90+ min cadence, the badge now shows
+"stale" most of the time even when the pipeline is behaving normally.
+Should be raised (e.g. to 90 min) or reconciled once the external-cron fix
+lands and real cadence is known.
 
 **Credentials live in GitHub Actions encrypted secrets**, reconstructed to
 files at the start of each run (nothing sensitive is committed):
@@ -147,13 +189,16 @@ Individual steps can also be run separately (`npm run download-report`, `npm run
 
 ## Known limitations / not-yet-done
 
-1. **"Refresh" buttons on the dashboard only re-fetch the latest Drive snapshot** — they cannot trigger a brand-new live scrape synchronously on click, because GitHub Pages is a static site with no backend, and GitHub Actions workflows aren't instant/synchronous from a browser click. In practice this matters less now that the whole pipeline runs automatically every 15-30 min — but genuine "click → scrape happens right now, wait, see fresh data" still needs a real server (VM) or a more involved workflow-dispatch + polling setup.
-   - **Status:** not built. A VM remains the option if true instant on-demand refresh is ever needed; the free GitHub Actions cron is the current tradeoff (frequent enough, not instant).
-2. **N V CONNECT ACROSS PRIVATE LIMITED (PixlerPay)** — automation fails; its "DT and Payout" combined solution type has a different portal layout (the "Payouts Transaction" nav link isn't found, times out after 30s). Not fixed. Workaround: `data/manual-transactions.json` has one manual entry (₹50,00,000 on 2026-07-02 → ₹10,000 commission at 0.20% margin) added by the user; add more entries there in the same shape as needed.
-3. **3 PixlerPay clients showed zero transactions** in an earlier scrape (Elleaura, FINFLEX, WESURE cybertech/infra/innovations) — flagged as worth a manual sanity check since they're marked Active/Onboarding in the rate sheet, but not investigated further.
-4. **Paynix's aggregate "Wallet Change" column is still inferred from balance deltas** between runs (current − previous), not a real ledger — this is separate from (and coarser than) the per-merchant "Load Requests" log, which IS a real log for the 9 merchants with credentials.
-5. **One pre-existing scraping quirk, not yet fixed**: at least one failed payout's `reason` field scraped as the literal string `"FAILED"` instead of a real gateway message — a minor regex miss in `scrapeFailedPayouts()`'s reason-extraction pattern. Low priority, cosmetic (doesn't affect the commission math), noticed while testing Telegram alert formatting.
-6. **Only 9 of 13 Paynix merchants have merchant-portal logins** (`data/paynix-merchant-logins.json`, gitignored). Missing: APAS TECH POINT, PPAY SOLUTION, Global Books Trading, Define Enterprises. Their rows on the Paynix tab show no "Recent" wallet-log toggle since there's nothing to scrape. Add credentials in the same JSON shape (and update the `PAYNIX_MERCHANT_LOGINS` GitHub secret) to close the gap.
+1. **Scheduled automation cadence is unreliable — see the diagnosis in the Automation section above.** GitHub's `schedule` trigger delivers roughly 10-13% of the configured 15/30-min frequency; real cadence is ~hourly, sometimes 3+ hours overnight. Fix chosen (external cron via cron-job.org → `workflow_dispatch` API) but not yet implemented as of this writing — needs a fine-grained PAT created and two cron-job.org jobs configured (steps documented above).
+2. **"Refresh" buttons on the dashboard only re-fetch the latest Drive snapshot** — they cannot trigger a brand-new live scrape synchronously on click, because GitHub Pages is a static site with no backend, and GitHub Actions workflows aren't instant/synchronous from a browser click. Genuine "click → scrape happens right now, wait, see fresh data" still needs a real server (VM) or a more involved workflow-dispatch + polling setup.
+   - **Status:** not built. A VM remains the option if true instant on-demand refresh is ever needed.
+3. **N V CONNECT ACROSS PRIVATE LIMITED (PixlerPay)** — automation fails; its "DT and Payout" combined solution type has a different portal layout (the "Payouts Transaction" nav link isn't found, times out after 30s). Not fixed. Workaround: `data/manual-transactions.json` has one manual entry (₹50,00,000 on 2026-07-02 → ₹10,000 commission at 0.20% margin) added by the user; add more entries there in the same shape as needed.
+4. **3 PixlerPay clients showed zero transactions** in an earlier scrape (Elleaura, FINFLEX, WESURE cybertech/infra/innovations) — flagged as worth a manual sanity check since they're marked Active/Onboarding in the rate sheet, but not investigated further.
+5. **Paynix's aggregate "Wallet Change" column is still inferred from balance deltas** between runs (current − previous), not a real ledger — this is separate from (and coarser than) the per-merchant "Load Requests" log, which IS a real log for the 9 merchants with credentials.
+6. **One pre-existing scraping quirk, not yet fixed**: at least one failed payout's `reason` field scraped as the literal string `"FAILED"` instead of a real gateway message — a minor regex miss in `scrapeFailedPayouts()`'s reason-extraction pattern. Low priority, cosmetic (doesn't affect the commission math), noticed while testing Telegram alert formatting.
+7. **Only 9 of 13 Paynix merchants have merchant-portal logins** (`data/paynix-merchant-logins.json`, gitignored). Missing: APAS TECH POINT, PPAY SOLUTION, Global Books Trading, Define Enterprises. Their rows on the Paynix tab show no "Recent" wallet-log toggle since there's nothing to scrape. Add credentials in the same JSON shape (and update the `PAYNIX_MERCHANT_LOGINS` GitHub secret) to close the gap.
+8. **Dashboard's stale-badge threshold (20 min) doesn't match real automation cadence** (~60-90+ min) — see the Automation section's note. Should be reconciled once item 1 is fixed and real cadence is known.
+9. **One transient CI failure observed** (of ~20 runs so far): `wallet-alert.yml` run on 2026-07-11 23:35 UTC failed because the Paynix reseller login page timed out twice in a row (60s each, via the retry already built into `gotoWithRetry`). Self-healed on the next run — not a recurring pattern, just noted for awareness. If it becomes frequent, the retry timeout/count may need tuning.
 
 ## Key files
 
