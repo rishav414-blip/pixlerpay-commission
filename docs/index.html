@@ -934,14 +934,21 @@
     };
   }
 
-  // Same margin/AK rules as calculate-paynix-commission.js — kept in sync manually.
+  // Same margin/AK rules as calculate-paynix-commission.js — kept in sync
+  // manually. NOTE: Paynix's flat-rate band is amount < Rs1000 (the WHOLE
+  // sub-1000 range), unlike PixlerPay's 100-200-only band above — do not
+  // copy that condition here again, it was a confirmed bug (2026-07-13).
   function calcMarginCommission(amount, rate) {
-    if (amount >= 100 && amount <= 200 && rate.onboardedFlat100to200 != null && rate.resellerFlat100to200 != null) {
-      return rate.onboardedFlat100to200 - rate.resellerFlat100to200;
+    if (amount <= 1000 && rate.onboardedFlatBelow1000 != null && rate.resellerFlatBelow1000 != null) {
+      return rate.onboardedFlatBelow1000 - rate.resellerFlatBelow1000;
     }
     return (amount * (rate.onboardedPct - rate.resellerPct)) / 100;
   }
+  // Below Rs1000 the flat differential IS the full combined commission —
+  // AK is only a separate percentage split above Rs1000. Confirmed
+  // against Paynix's own wallet ledger 2026-07-13.
   function calcAkCommission(amount, rate) {
+    if (amount <= 1000) return 0;
     if (rate.akPct == null) return 0;
     return (amount * rate.akPct) / 100;
   }
@@ -1217,9 +1224,9 @@
         excelRow.getCell(1).value = sno++;
         excelRow.getCell(2).value = c.clientName;
         excelRow.getCell(3).value = c.resellerPct != null ? c.resellerPct / 100 : null;
-        excelRow.getCell(4).value = c.resellerFlat100to200 != null ? `Rs ${c.resellerFlat100to200}` : '';
+        excelRow.getCell(4).value = c.resellerFlatBelow1000 != null ? `Rs ${c.resellerFlatBelow1000}` : '';
         excelRow.getCell(5).value = c.onboardedPct != null ? c.onboardedPct / 100 : null;
-        excelRow.getCell(6).value = c.onboardedFlat100to200 != null ? `Rs ${c.onboardedFlat100to200}` : '';
+        excelRow.getCell(6).value = c.onboardedFlatBelow1000 != null ? `Rs ${c.onboardedFlatBelow1000}` : '';
         excelRow.getCell(7).value = c.marginPct != null ? c.marginPct / 100 : null;
         excelRow.getCell(8).value = Math.round(c.totalAmount * 100) / 100;
         excelRow.getCell(9).value = Math.round(c.totalCommission * 100) / 100;
@@ -1254,9 +1261,9 @@
         excelRow.getCell(1).value = sno++;
         excelRow.getCell(2).value = c.clientName + ' (no data available)';
         excelRow.getCell(3).value = c.resellerPct != null ? c.resellerPct / 100 : null;
-        excelRow.getCell(4).value = c.resellerFlat100to200 != null ? `Rs ${c.resellerFlat100to200}` : '';
+        excelRow.getCell(4).value = c.resellerFlatBelow1000 != null ? `Rs ${c.resellerFlatBelow1000}` : '';
         excelRow.getCell(5).value = c.onboardedPct != null ? c.onboardedPct / 100 : null;
-        excelRow.getCell(6).value = c.onboardedFlat100to200 != null ? `Rs ${c.onboardedFlat100to200}` : '';
+        excelRow.getCell(6).value = c.onboardedFlatBelow1000 != null ? `Rs ${c.onboardedFlatBelow1000}` : '';
         excelRow.getCell(7).value = c.marginPct != null ? c.marginPct / 100 : null;
         excelRow.getCell(10).value = c.akPct != null ? c.akPct / 100 : null;
         excelRow.getCell(3).numFmt = '0.00%';

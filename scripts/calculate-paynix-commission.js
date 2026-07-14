@@ -1,9 +1,18 @@
 // Computes margin commission + AK commission per Paynix client, from the
 // per-merchant payout reports download-paynix-merchant-reports.js exports.
-// Mirrors calculate-commission.js's PixlerPay logic (percentage margin,
-// with a flat-rate override for amount 100-200) but adds a second
-// commission figure: AK commission = amount x akPct, a separate
-// downstream-partner cut defined in data/paynix-commission-rates.json.
+//
+// IMPORTANT — Paynix's flat-rate band is different from PixlerPay's:
+// PixlerPay only flat-rates the 100-200 amount band; Paynix flat-rates
+// EVERYTHING below Rs 1000 (confirmed by the client 2026-07-13, e.g.
+// Curiobyte: 0.75% reseller / 0.90% onboarded above Rs1000 -> 0.15%
+// margin, but Rs10/Rs11 flat -> Rs1 flat margin for ANY amount < Rs1000,
+// not just 100-200). An earlier version of this file wrongly reused the
+// PixlerPay 100-200 condition, which overcharged percentage-based
+// commission on every 200-999 transaction. Fixed here — do not reuse the
+// PixlerPay 100-200 band logic for Paynix again.
+//
+// AK commission has no flat-band override at all (the rate card labels
+// it "Ak part (From % only)") — always amount x akPct regardless of amount.
 //
 // Clients with no merchantId mapping in the rate card, or no exported
 // report file (the 4 known-missing merchant logins — see HANDOFF.md
@@ -35,18 +44,21 @@ function parseToISODate(value) {
   return null;
 }
 
-// Same rule as calculate-commission.js: percentage margin on amount,
-// except a flat-rate override for the 100-200 band. Applied separately
-// for the main margin commission and for AK commission (AK has no known
-// flat-band override in the rate card, so it's always percentage-based).
 function calcMarginCommission(amount, rate) {
-  if (amount >= 100 && amount <= 200 && rate.onboardedFlat100to200 != null && rate.resellerFlat100to200 != null) {
-    return rate.onboardedFlat100to200 - rate.resellerFlat100to200;
+  if (amount <= 1000 && rate.onboardedFlatBelow1000 != null && rate.resellerFlatBelow1000 != null) {
+    return rate.onboardedFlatBelow1000 - rate.resellerFlatBelow1000;
   }
   return (amount * (rate.onboardedPct - rate.resellerPct)) / 100;
 }
 
+// Confirmed against Paynix's own wallet ledger (2026-07-13, cross-check
+// of 10,036 matched transactions): below Rs1000, the flat differential
+// IS the entire combined commission credited (margin+AK together) — AK
+// is only split out separately when using the percentage tier (>= Rs1000).
+// Adding AK on top of the flat rate for sub-1000 amounts double-counted
+// it and caused ~2000 transaction-level mismatches vs Paynix's ledger.
 function calcAkCommission(amount, rate) {
+  if (amount <= 1000) return 0;
   if (rate.akPct == null) return 0;
   return (amount * rate.akPct) / 100;
 }
@@ -65,7 +77,7 @@ function main() {
       clients.push({
         clientName: rate.clientName, merchantId: null, group: rate.group,
         resellerPct: rate.resellerPct, onboardedPct: rate.onboardedPct,
-        resellerFlat100to200: rate.resellerFlat100to200, onboardedFlat100to200: rate.onboardedFlat100to200,
+        resellerFlatBelow1000: rate.resellerFlatBelow1000, onboardedFlatBelow1000: rate.onboardedFlatBelow1000,
         akPct: rate.akPct, marginPct: Math.round((rate.onboardedPct - rate.resellerPct) * 100) / 100,
         hasData: false, successfulTxns: 0, totalAmount: 0, totalCommission: 0, totalAkCommission: 0,
       });
@@ -77,7 +89,7 @@ function main() {
       clients.push({
         clientName: rate.clientName, merchantId: rate.merchantId, group: rate.group,
         resellerPct: rate.resellerPct, onboardedPct: rate.onboardedPct,
-        resellerFlat100to200: rate.resellerFlat100to200, onboardedFlat100to200: rate.onboardedFlat100to200,
+        resellerFlatBelow1000: rate.resellerFlatBelow1000, onboardedFlatBelow1000: rate.onboardedFlatBelow1000,
         akPct: rate.akPct, marginPct: Math.round((rate.onboardedPct - rate.resellerPct) * 100) / 100,
         hasData: false, successfulTxns: 0, totalAmount: 0, totalCommission: 0, totalAkCommission: 0,
       });
@@ -107,7 +119,7 @@ function main() {
     clients.push({
       clientName: rate.clientName, merchantId: rate.merchantId, group: rate.group,
       resellerPct: rate.resellerPct, onboardedPct: rate.onboardedPct,
-      resellerFlat100to200: rate.resellerFlat100to200, onboardedFlat100to200: rate.onboardedFlat100to200,
+      resellerFlatBelow1000: rate.resellerFlatBelow1000, onboardedFlatBelow1000: rate.onboardedFlatBelow1000,
       akPct: rate.akPct, marginPct: Math.round((rate.onboardedPct - rate.resellerPct) * 100) / 100,
       hasData: true, successfulTxns,
       totalAmount: Math.round(totalAmount * 100) / 100,
