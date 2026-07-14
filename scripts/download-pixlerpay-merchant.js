@@ -168,7 +168,12 @@ async function exportPayouts(page, fromDate, toDate) {
 
 async function run() {
   const browser = await chromium.launch({ headless });
-  const page = await browser.newPage();
+  // See download-paynix-merchant-wallets.js for why: the wallet log's
+  // "Created" column is rendered client-side in the browser's local
+  // timezone, which defaults to UTC on GitHub Actions runners and
+  // silently shifts scraped times 5.5 hours off from real IST.
+  const context = await browser.newContext({ timezoneId: 'Asia/Kolkata' });
+  const page = await context.newPage();
 
   console.log('Logging into PixlerPay Paynix merchant account...');
   await page.goto(PIXLERPAY_MERCHANT_LOGIN_URL, { waitUntil: 'domcontentloaded' });

@@ -519,6 +519,30 @@ intentionally, same reason the commission formulas are duplicated between
 the Node scripts and the browser script — no shared module between them —
 **keep both in sync if this ever changes**).
 
+**Wallet-log timestamps were also wrong by 5.5 hours on CI, fixed
+2026-07-15**: separate bug from the sort issue above. Paynix's dashboard
+renders the "Created" column **client-side**, using the scraping
+browser's local timezone. None of the Playwright `browser.newContext()`
+calls in this project set an explicit `timezoneId`, so the rendered time
+follows the host OS's timezone — correct when run locally (this dev
+machine is IST), but silently shifted 5.5 hours earlier than real IST
+whenever the scrape ran on a GitHub Actions runner (UTC by default).
+Confirmed by comparing a DOM-scraped Sunshine Global entry against
+Paynix's own raw API (`GET .../wallet/load-requests`, discovered while
+investigating — same technique as the payouts API used elsewhere): the
+DOM text matched the API's UTC `created_at` + 5:30 exactly when scraped
+locally, which is the tell that it's a client-rendering timezone issue,
+not a data-content bug. **Fixed by pinning `timezoneId: 'Asia/Kolkata'`
+on every browser context** across `download-paynix.js`,
+`download-paynix-merchant-wallets.js`, `download-pixlerpay-merchant.js`,
+and `download-report.js` (the last one preventively — no confirmed bug
+there, but same risk pattern). Wallet logs aren't part of the
+incremental-merge system (each run just overwrites the top-5 per
+merchant, no dedupe/history) so the fix takes effect immediately on the
+next run, no backfill needed. `download-paynix-merchant-reports.js` was
+NOT at risk — it reads `created_at` straight from the API as a raw ISO
+string, never DOM-rendered, so it was never timezone-dependent.
+
 No-ops cleanly (logs and exits 0) if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`
 aren't set — safe to run even before the bot exists.
 

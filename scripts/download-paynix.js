@@ -194,7 +194,11 @@ async function gotoWithRetry(page, url, options) {
 async function run() {
   const previous = await loadPreviousSnapshot();
   const browser = await chromium.launch({ headless });
-  const context = await browser.newContext();
+  // See download-paynix-merchant-wallets.js for why: client-side-rendered
+  // timestamps on Paynix's dashboard follow the browser's local timezone,
+  // which defaults to UTC on GitHub Actions runners and silently shifts
+  // scraped times 5.5 hours off from real IST.
+  const context = await browser.newContext({ timezoneId: 'Asia/Kolkata' });
   const page = await context.newPage();
 
   console.log('Logging into Paynix reseller portal...');

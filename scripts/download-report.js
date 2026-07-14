@@ -67,7 +67,10 @@ async function downloadForAccount(browser, account) {
   const { name, username, password } = account;
   console.log(`\n=== [${name}] Logging in as ${username} ===`);
 
-  const context = await browser.newContext({ acceptDownloads: true });
+  // Preventive, same reasoning as download-paynix-merchant-wallets.js —
+  // pin timezone so any client-rendered date on PixlerPay's own portal
+  // isn't silently UTC-shifted on GitHub Actions runners.
+  const context = await browser.newContext({ acceptDownloads: true, timezoneId: 'Asia/Kolkata' });
   const page = await context.newPage();
 
   await page.goto(PIXLERPAY_LOGIN_URL, { waitUntil: 'domcontentloaded' });

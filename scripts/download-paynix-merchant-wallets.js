@@ -89,7 +89,15 @@ async function run() {
 
   const browser = await chromium.launch({ headless });
   for (const login of logins) {
-    const context = await browser.newContext();
+    // Paynix's dashboard renders the "Created" column client-side using
+    // the browser's local timezone. GitHub Actions runners default to
+    // UTC, which silently shifted every scraped wallet-log timestamp
+    // 5.5 hours earlier than the real IST time (only matched reality when
+    // run locally on an IST machine — confirmed 2026-07-15 by comparing
+    // the DOM-scraped text against the raw UTC created_at from Paynix's
+    // own /wallet/load-requests API). Pin the timezone explicitly so
+    // scrapes are correct regardless of runner OS timezone.
+    const context = await browser.newContext({ timezoneId: 'Asia/Kolkata' });
     const page = await context.newPage();
     try {
       console.log(`Scraping wallet log for ${login.merchantName}...`);
