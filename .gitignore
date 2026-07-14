@@ -21,4 +21,5 @@ data/paynix-snapshot.json
 data/paynix-snapshot-previous.json
 data/pixlerpay-merchant-snapshot.json
 data/paynix-merchant-reports/
+data/pixlerpay-telegram-previous.json
 !data/.gitkeep

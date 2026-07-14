@@ -374,6 +374,115 @@ transaction volume, only wallet balance/status.
   the existing `PAYNIX_MERCHANT_LOGINS` secret already set for wallet
   scraping, no new secret needed there.
 
+## Incremental fetch + 30-day retention, added 2026-07-14
+
+Every scrape script used to do a **full re-fetch + full recompute** on
+every single run — no merging, no pruning. This caused two real problems:
+runs got slower over time as account histories grew (some Paynix merchants
+had 9,000+ lifetime payouts re-exported every 15-30 min), and there was no
+retention limit anywhere — the dashboard shipped the *entire* history to
+the browser forever.
+
+**Also found and fixed while building this**: GitHub Actions had been
+failing on literally every scheduled run for ~2 days before this (see the
+`npm ci` / `package-lock.json` incident below) — the incremental rework
+happened right after diagnosing and fixing that, so double-check CI run
+history if data ever looks stale again.
+
+**The pattern, applied to all three payout data sources** (PixlerPay's 18
+client accounts, Paynix's 9 merchant accounts, PixlerPay's own merchant
+account):
+
+1. **Fetch only a recent window** each run (`FETCH_WINDOW_DAYS` /
+   `REPORT_DAYS`, default 3 days — a safety margin beyond the 15/30-min run
+   cadence so a missed/delayed run can't create a gap), instead of the full
+   history or a full 30-day window every time.
+2. **Merge against the previously published Drive snapshot**, deduped by a
+   stable ID (PixlerPay: the CSV's own `Transaction ID` column; Paynix:
+   `payoutId`/`transaction_id`). The transaction tuple format grew a 4th
+   element for this: `[va/merchantId, isoDate, amount, id]` (PixlerPay tab
+   code in `docs/index.html` destructures `[va, isoDate, amount]` and
+   safely ignores the extra element — no dashboard changes needed).
+3. **Prune anything older than `RETENTION_DAYS` (30)** before recomputing
+   aggregates. This is what makes "the dashboard only shows the last 30
+   days" true everywhere — the underlying data itself is capped, so the
+   dashboard's default full-range view naturally can't show more than 30
+   days without any dashboard-side date-capping logic needed.
+
+**Per-source specifics:**
+
+- **PixlerPay** (`scripts/calculate-commission.js`): `REPORT_DAYS=3` in
+  `.env` controls `download-report.js`'s fetch window. Merge/prune logic
+  lives entirely in `calculate-commission.js` (fetches `previous` via
+  `fetchPreviousFromDrive(GOOGLE_DRIVE_RESULTS_FILE_ID, ...)`, falls back
+  to the local `website/commission-results.json` if Drive isn't
+  reachable). Rows with no detectable Transaction ID column are dropped
+  rather than merged (can't safely dedupe them).
+- **Paynix merchant reports** (`scripts/download-paynix-merchant-reports.js`
+  + `scripts/calculate-paynix-commission.js`): rewritten to hit the
+  merchant portal's own authenticated JSON API directly
+  (`GET https://api.paynix.co.in/api/v1/merchant/portal/transactions/payouts?from=...&to=...`,
+  bearer token read from `localStorage.paynix_access_token` inside a
+  `page.evaluate()` — same technique used for the reseller wallet
+  ledger investigation) instead of clicking Export and downloading an
+  xlsx — **much faster** (all 9 merchants in ~1.5 min vs several minutes
+  before) since it skips the file-download round trip and only asks for
+  the recent window in the first place. `PAYNIX_MERCHANT_FETCH_WINDOW_DAYS`
+  env var overrides the 3-day default if needed.
+- **PixlerPay's own merchant account**
+  (`scripts/download-pixlerpay-merchant.js`): still uses the xlsx Export
+  flow (richer fields — fee, GST, UTR, etc. — that aren't in the JSON API
+  response), but now sets the portal's own date-filter inputs before
+  clicking Export, narrowing to `PIXLERPAY_MERCHANT_FETCH_WINDOW_DAYS`
+  (default 3) instead of exporting full lifetime history. Merge/prune
+  happens in `run()` itself (this script doesn't have a separate
+  `calculate-*` step).
+
+**One-time migration gotcha hit and fixed**: the first run after adding
+the 4th tuple element merged a previously-published UN-tagged snapshot
+(3-element tuples, no ID) against a freshly-tagged fetch of the same
+window — since untagged entries got synthetic positional keys that never
+match a real ID, this **did not dedupe and nearly doubled the transaction
+count** (85,769 → 171,548) before the bug was caught. Fixed by dropping
+untagged legacy entries entirely on merge, relying on the fresh fetch's
+window already covering the full retention period at the time of the
+cutover (true then; wouldn't be safe if this pattern is ever reintroduced
+elsewhere without the same fresh-covers-retention guarantee). **If you
+ever see transaction counts roughly double after a data-format change,
+suspect exactly this failure mode first.**
+
+**Idle-client alerting made real**: `idleClients` in
+`commission-results.json` was previously referenced by `docs/index.html`
+but never actually populated by `calculate-commission.js` — dead code.
+Now computed for real: any client with rate-card `status: "Active"` and
+zero successful transactions in *this run's fresh scrape* (not the merged
+30-day history — this is meant to catch "did this run's login/scrape
+work," a different question from "does this client have recent volume").
+
+## GitHub Actions `npm ci` failure — root cause and fix (2026-07-14)
+
+Every scheduled run (`refresh.yml` every 30 min, `wallet-alert.yml` every
+15 min) had been failing in ~13 seconds — instantly, before any scraping
+ever started — for roughly 2 days. Diagnosed via `gh run view <id>
+--log-failed`: `npm ci` requires `package-lock.json` to exactly match
+`package.json`, and `exceljs` had been added to `package.json` via `npm
+install --no-save` + a manual edit (2026-07-12, for the commission Excel
+export feature) without ever regenerating the lockfile. Fixed by running a
+plain `npm install` to resync it, committing the result. Confirmed fixed
+via a manual `workflow_dispatch` run completing successfully end-to-end.
+
+**Lesson**: never add a dependency via `--no-save` + manual `package.json`
+edit in this repo again — always let `npm install <pkg>` update both
+files together, or explicitly run a plain `npm install` afterward to
+resync `package-lock.json` before committing.
+
+Also refreshed while diagnosing this: the `ENV_FILE` / `ACCOUNTS_JSON` /
+`PAYNIX_MERCHANT_LOGINS` GitHub secrets, whose timestamps looked stale
+relative to recent local `.env`/`data/*.json` changes — re-run `gh secret
+set <NAME> --repo rishav414-blip/pixlerpay-commission < <file>` any time
+local credential files change, this is easy to forget and silently leaves
+CI using outdated credentials/config.
+
 ## Telegram alerts — live
 
 Bot: **@payout_alert_autobot**. `scripts/telegram-alert.js` runs as the
@@ -383,9 +492,31 @@ last step of both workflows and sends (via the free Telegram Bot API):
 - New wallet top-up ("Load Request") entries — both the 9 Paynix merchants
   and PixlerPay's own merchant account, diffed against the last published
   Drive snapshot (see the CI gotcha above)
+- **Added 2026-07-14**: a PixlerPay summary message (new txns + commission
+  delta since the last alert, tracked in a small local
+  `data/pixlerpay-telegram-previous.json` snapshot — not the full 85K+
+  transaction file, just enough to diff) plus idle/failure alerts, using
+  the newly-real `idleClients` and existing `skippedReports` fields.
+  PixlerPay previously had zero Telegram alerts at all.
+
+**Message format, added 2026-07-14** (per explicit request): wallet
+top-up lines now include the entry's `createdAt` timestamp, and each
+merchant's new-load-request list is capped to the **2 most recent**
+entries (`MAX_WALLET_ENTRIES_PER_MERCHANT` in `telegram-alert.js`) with a
+"…and N more" suffix if there were more — previously showed every new
+entry uncapped.
 
 No-ops cleanly (logs and exits 0) if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`
 aren't set — safe to run even before the bot exists.
+
+**Caution for next session**: dynamically `import()`-ing
+`telegram-alert.js` (or any of these scripts) to inspect it **executes its
+top-level `run()` call for real**, including sending live Telegram
+messages if credentials are set in `.env` — this actually happened once
+while testing (2026-07-14, 3 unintended real messages sent). To test
+message content safely, read the file and reason about the code, or
+extract the pure `build*Message()` functions into a separate
+importable module — don't `import()` the script itself.
 
 ## One command to refresh everything (still works locally too)
 

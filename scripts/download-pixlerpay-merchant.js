@@ -23,6 +23,26 @@ const DATA_DIR = './data';
 const SNAPSHOT_FILE = path.join(DATA_DIR, 'pixlerpay-merchant-snapshot.json');
 const OUTPUT_JSON = path.join('./website', 'pixlerpay-merchant-results.json');
 const TOP_N_WALLET_LOG = 5;
+const RETENTION_DAYS = 30;
+const FETCH_WINDOW_DAYS = Number(process.env.PIXLERPAY_MERCHANT_FETCH_WINDOW_DAYS) || 3;
+
+function isoDaysAgo(days) {
+  return new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+}
+
+// PixlerPay merchant export dates look like "9/7/2026, 12:37:47 pm" (D/M/YYYY).
+function parseToISODate(value) {
+  if (!value) return null;
+  const s = String(value).trim();
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) {
+    const [, d, mo, y] = m;
+    return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+  const parsed = new Date(s);
+  if (!isNaN(parsed)) return parsed.toISOString().slice(0, 10);
+  return null;
+}
 
 const headless = PAYNIX_HEADFUL !== 'true';
 
@@ -83,9 +103,27 @@ function computeNewLoadRequests(previousEntries, currentEntries) {
   return currentEntries.filter((e) => e.requestId && !prevIds.has(e.requestId));
 }
 
-async function exportPayouts(page) {
+// Incremental fetch (2026-07-14): this used to export the FULL lifetime
+// payout history every run (700+ rows and growing). Now applies the
+// portal's own date filter (same UI confirmed working on the individual
+// merchant accounts in download-paynix-merchant-reports.js) before
+// exporting, so only a recent window is downloaded — run() below merges
+// it against the previously published snapshot (deduped by payoutId) and
+// prunes anything older than 30 days.
+async function exportPayouts(page, fromDate, toDate) {
   await page.goto('https://merchant.paynix.co.in/dashboard/payouts', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2000);
+
+  const dateInputs = page.locator('input[type="date"]');
+  if (await dateInputs.count() >= 2) {
+    await dateInputs.nth(0).fill(fromDate);
+    await dateInputs.nth(1).fill(toDate);
+    const applyBtn = page.getByRole('button', { name: /apply/i }).first();
+    if (await applyBtn.count()) {
+      await applyBtn.click();
+      await page.waitForTimeout(1500);
+    }
+  }
 
   const exportBtn = page.getByRole('button', { name: /export/i }).first();
   const [download] = await Promise.all([
@@ -145,13 +183,35 @@ async function run() {
   console.log(`Scraping wallet transaction log (top ${TOP_N_WALLET_LOG})...`);
   const walletLog = await scrapeWalletLog(page);
 
-  console.log('Exporting payouts (xlsx download)...');
-  const payouts = await exportPayouts(page);
+  const fromDate = isoDaysAgo(FETCH_WINDOW_DAYS);
+  const toDate = isoDaysAgo(0);
+  console.log(`Exporting payouts (xlsx download, ${fromDate} to ${toDate})...`);
+  const freshPayouts = await exportPayouts(page, fromDate, toDate);
 
   await browser.close();
 
   const previousResults = await fetchPreviousFromDrive(GOOGLE_DRIVE_PIXLERPAY_MERCHANT_FILE_ID, GOOGLE_DRIVE_API_KEY);
   const newLoadRequests = computeNewLoadRequests(previousResults?.walletLog, walletLog);
+
+  // Merge the fresh window against the previous snapshot (deduped by
+  // payoutId, same pattern as calculate-commission.js /
+  // calculate-paynix-commission.js), then prune anything older than
+  // RETENTION_DAYS.
+  const mergedByPayoutId = new Map();
+  for (const p of previousResults?.payouts || []) {
+    if (!p.payoutId) continue;
+    mergedByPayoutId.set(p.payoutId, p);
+  }
+  for (const p of freshPayouts) {
+    if (!p.payoutId) continue;
+    mergedByPayoutId.set(p.payoutId, p);
+  }
+  const cutoffISO = isoDaysAgo(RETENTION_DAYS);
+  const payouts = Array.from(mergedByPayoutId.values()).filter((p) => {
+    const isoDate = parseToISODate(p.createdAt);
+    return !isoDate || isoDate >= cutoffISO;
+  });
+  console.log(`Merged payout log: ${mergedByPayoutId.size} total, ${payouts.length} within ${RETENTION_DAYS}-day retention window (cutoff ${cutoffISO}).`);
 
   const successPayouts = payouts.filter((p) => p.status === 'SUCCESS');
   const totalCommission = Math.round(successPayouts.reduce((sum, p) => sum + p.commission, 0) * 100) / 100;
