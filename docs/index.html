@@ -413,6 +413,21 @@
   function fmtINR(n) { return '₹' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 0 }); }
   function fmtINR2(n) { return '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
+  // Paynix wallet-log timestamps look like "13/07/26, 8:42 pm"
+  // (DD/MM/YY, h:mm am/pm). A plain string sort on this breaks across
+  // month boundaries — e.g. "02/07/26" sorts before "30/06/26"
+  // alphabetically even though June 30 is earlier than July 2. Parses to
+  // a real timestamp for correct chronological sorting.
+  function parseWalletTimestamp(s) {
+    const m = s && String(s).match(/^(\d{2})\/(\d{2})\/(\d{2}),\s*(\d{1,2}):(\d{2})\s*(am|pm)/i);
+    if (!m) return 0;
+    let [, dd, mo, yy, hh, mm, ap] = m;
+    hh = parseInt(hh, 10);
+    if (/pm/i.test(ap) && hh !== 12) hh += 12;
+    if (/am/i.test(ap) && hh === 12) hh = 0;
+    return new Date(2000 + parseInt(yy, 10), parseInt(mo, 10) - 1, parseInt(dd, 10), hh, parseInt(mm, 10)).getTime();
+  }
+
   let DATA = null;
   let sortKey = 'totalCommission';
   let sortDir = -1;
@@ -1086,7 +1101,7 @@
         allLogEntries.push({ ...e, merchantId, merchantName: merchantNameById.get(merchantId) || merchantId });
       }
     }
-    allLogEntries.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    allLogEntries.sort((a, b) => parseWalletTimestamp(b.createdAt) - parseWalletTimestamp(a.createdAt));
     // Display cap: only the 10 most recent entries overall are shown here.
     // This is independent of TOP_N = 5 in download-paynix-merchant-wallets.js,
     // which caps how many entries are *collected* per merchant — do not

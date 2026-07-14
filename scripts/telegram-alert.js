@@ -31,12 +31,29 @@ function loadRequestLine(r) {
   return `  • ${r.requestId || '-'} — ₹${r.amount.toLocaleString('en-IN')} — ${r.method || '-'} — ${r.status || '-'}${ts}`;
 }
 
-// Sorts newest-first (createdAt strings from Paynix are "DD/MM/YY, h:mm a"
-// format, not directly sortable — but entries arrive from the scraper
-// already newest-first per merchant, so just take the head) and caps to
-// MAX_WALLET_ENTRIES_PER_MERCHANT.
+// Paynix wallet-log timestamps look like "13/07/26, 8:42 pm"
+// (DD/MM/YY, h:mm am/pm). A plain string sort breaks across month
+// boundaries (e.g. "02/07/26" < "30/06/26" alphabetically, even though
+// June 30 is earlier than July 2) — this bit the webpage's consolidated
+// wallet-log table (fixed 2026-07-14 in docs/index.html) and would have
+// silently shown the wrong "2 most recent" entries here too if this had
+// just trusted scrape order. Mirrors parseWalletTimestamp in
+// docs/index.html — keep both in sync.
+function parseWalletTimestamp(s) {
+  const m = s && String(s).match(/^(\d{2})\/(\d{2})\/(\d{2}),\s*(\d{1,2}):(\d{2})\s*(am|pm)/i);
+  if (!m) return 0;
+  let [, dd, mo, yy, hh, mm, ap] = m;
+  hh = parseInt(hh, 10);
+  if (/pm/i.test(ap) && hh !== 12) hh += 12;
+  if (/am/i.test(ap) && hh === 12) hh = 0;
+  return new Date(2000 + parseInt(yy, 10), parseInt(mo, 10) - 1, parseInt(dd, 10), hh, parseInt(mm, 10)).getTime();
+}
+
+// Sorts newest-first by actual timestamp, then caps to MAX_WALLET_ENTRIES_PER_MERCHANT.
 function capWalletEntries(entries) {
-  return entries.slice(0, MAX_WALLET_ENTRIES_PER_MERCHANT);
+  return [...entries]
+    .sort((a, b) => parseWalletTimestamp(b.createdAt) - parseWalletTimestamp(a.createdAt))
+    .slice(0, MAX_WALLET_ENTRIES_PER_MERCHANT);
 }
 
 function buildPaynixMessage(d) {

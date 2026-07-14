@@ -506,6 +506,19 @@ entries (`MAX_WALLET_ENTRIES_PER_MERCHANT` in `telegram-alert.js`) with a
 "…and N more" suffix if there were more — previously showed every new
 entry uncapped.
 
+**Wallet-log sort bug, fixed 2026-07-14**: both the webpage's consolidated
+"Recent Wallet Top-Ups" table and Telegram's "2 most recent" selection
+were sorting `createdAt` (format `"13/07/26, 8:42 pm"`, DD/MM/YY h:mm a)
+as a **plain string**, not a real timestamp. This breaks two ways: across
+month boundaries (`"02/07/26"` sorts before `"30/06/26"` alphabetically,
+even though June 30 is earlier) and within the same day (`"8:40 am"` sorts
+above `"8:02 pm"` since string comparison ignores am/pm entirely). Fixed
+with a real `parseWalletTimestamp()` parser in both
+`docs/index.html` and `scripts/telegram-alert.js` (duplicated
+intentionally, same reason the commission formulas are duplicated between
+the Node scripts and the browser script — no shared module between them —
+**keep both in sync if this ever changes**).
+
 No-ops cleanly (logs and exits 0) if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`
 aren't set — safe to run even before the bot exists.
 
