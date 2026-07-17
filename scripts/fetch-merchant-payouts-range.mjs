@@ -29,11 +29,18 @@ async function fetchPayouts(page, fromDate, toDate) {
     const perPage = 500;
     let pageNum = 1;
     const payouts = [];
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     while (true) {
       const url = `https://api.paynix.co.in/api/v1/merchant/portal/transactions/payouts?page=${pageNum}&per_page=${perPage}&from=${fromDate}&to=${toDate}`;
-      const res = await fetch(url, { headers });
-      const json = await res.json();
+      let json;
+      for (let attempt = 1; ; attempt++) {
+        const res = await fetch(url, { headers });
+        json = await res.json();
+        if (json.success || json.error?.code !== 'RATE_LIMIT_EXCEEDED' || attempt >= 5) break;
+        await sleep(attempt * 5000);
+      }
       if (!json.success) return { error: json };
+      await sleep(400);
       const batch = json.data || [];
       for (const t of batch) {
         payouts.push({
@@ -57,8 +64,10 @@ async function run() {
   console.log(`Fetching payouts from ${FROM} to ${TO} for ${logins.length} merchant(s)...`);
 
   const browser = await chromium.launch({ headless });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let successCount = 0;
-  for (const login of logins) {
+  for (const [i, login] of logins.entries()) {
+    if (i > 0) await sleep(1500);
     const context = await browser.newContext();
     const page = await context.newPage();
     try {

@@ -39,11 +39,18 @@ async function run() {
     const perPage = 200;
     let pageNum = 1;
     const collected = [];
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     while (true) {
       const url = `https://api.paynix.co.in/api/v1/reseller/portal/wallet/transactions?page=${pageNum}&per_page=${perPage}`;
-      const res = await fetch(url, { headers });
-      const json = await res.json();
+      let json;
+      for (let attempt = 1; ; attempt++) {
+        const res = await fetch(url, { headers });
+        json = await res.json();
+        if (json.success || json.error?.code !== 'RATE_LIMIT_EXCEEDED' || attempt >= 5) break;
+        await sleep(attempt * 5000);
+      }
       if (!json.success) return { error: json };
+      await sleep(400);
       const batch = json.data || [];
       if (batch.length === 0) break;
       let allBelowFrom = true;
