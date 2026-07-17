@@ -1,6 +1,6 @@
 # Handoff — PixlerPay / Paynix Commission Dashboard
 
-Last updated: 2026-07-12 (added periodic commission Excel report, see below)
+Last updated: 2026-07-17 (Paynix commission cross-check report + reseller rate change to 0.70%, see below)
 
 ## What this project is
 
@@ -374,6 +374,96 @@ transaction volume, only wallet balance/status.
   the existing `PAYNIX_MERCHANT_LOGINS` secret already set for wallet
   scraping, no new secret needed there.
 
+## Paynix commission cross-check report, added 2026-07-17
+
+A one-off (not scheduled/automated) report comparing our own calculated
+margin commission per SUCCESS payout against what Paynix actually
+credited, matched via the reseller portal's own wallet ledger. First
+built ad-hoc in an earlier session and never saved anywhere — the output
+file (`Paynix_Commission_CrossCheck_12th July.xlsx`, one level up from
+this repo) existed but there was no script behind it. Rebuilt properly
+this session with reusable scripts:
+
+- `scripts/fetch-reseller-ledger-range.mjs <FROM> <TO> <outFile>` — logs
+  into the **reseller** portal (`PAYNIX_USERNAME`/`PAYNIX_PASSWORD`) and
+  paginates `GET /api/v1/reseller/portal/wallet/transactions`
+  (`localStorage.paynix_access_token` bearer auth, same technique as the
+  merchant-report scripts) newest-first until entries fall below `FROM`,
+  filtering to `[FROM, TO]`. This endpoint — and the whole idea that the
+  reseller-side wallet ledger carries a `COMMISSION`-category, per-payout
+  breakdown (`referenceType: PAYOUT_TXN`, `referenceId: <payoutId>`) — was
+  previously undiscovered/undocumented; found via a network-request probe
+  clicking the "Wallet" nav item in the reseller dashboard. Not part of
+  `npm run all` — this ledger isn't otherwise scraped anywhere.
+- `scripts/fetch-merchant-payouts-range.mjs <FROM> <TO> [outDir]` — same
+  per-merchant-portal API as `download-paynix-merchant-reports.js`, but
+  for an arbitrary explicit date range instead of the rolling
+  `FETCH_WINDOW_DAYS`. Needed because the regular incremental scrape only
+  keeps a few days locally between runs (the 30-day retention lives in
+  the *merged* Drive snapshot, not in these raw per-merchant report
+  files) — reconstructing a specific historical range (e.g. "1st-15th
+  July") requires re-fetching it directly from each portal.
+- `scripts/generate-paynix-crosscheck.cjs <FROM> <TO> <reportsDir>
+  <ledgerFile> <outPath>` — joins payouts to ledger entries by
+  `payoutId === referenceId`, recomputes our commission per transaction
+  using the **exact same** `calcMarginCommission` as
+  `calculate-paynix-commission.js` (keep in sync if that changes), and
+  writes a 3-sheet `.xlsx`: **Summary** (per-merchant match rate/volume/
+  commission totals), **All Transactions** (every SUCCESS payout with
+  matched/unmatched status and the diff), **Paynix Wallet Ledger (raw)**
+  (the raw COMMISSION entries, for manual spot-checking).
+- Only covers the 9 merchants with known portal logins (same gap as
+  limitation #7) — the 4 without logins are skipped, not shown as zero.
+- Output files are one level up from this repo
+  (`../Paynix_Commission_CrossCheck_<range>.xlsx`), not committed. The
+  scripts and rate card are committed; the raw per-run data dumps
+  (`data/paynix-merchant-reports-range/`, `data/reseller-ledger-*.json`)
+  are gitignored.
+
+**Rate card changed 2026-07-17**: client dropped the "Sumeet (reseller)"
+pricing to a flat **0.70%** for every client (was 0.75%/0.80% depending
+on group) — sourced from the actual Google Sheet this time
+(`docs.google.com/spreadsheets/d/124ZZg6E98XyQ882t5BeNSF4ng3KWceQJmCYX0H0kIW8`,
+read via the Google Drive MCP connector's `read_file_content`, not
+previously linked anywhere in this repo — worth remembering that URL for
+next time the sheet changes). Onboarded %, flat-below-1000 rupee values,
+and AK% were unchanged. Verified correct by generating the cross-check
+report for 1st-15th July with the new rate: "Our Commission" now matches
+Paynix's actual wallet-credited commission almost exactly per merchant
+(e.g. suvika: both sides ₹210.21) — confirming 0.70% is what Paynix is
+really crediting against, not just a plausible guess.
+
+**Footgun hit while doing this, now understood**: `upload-to-drive.js`
+unconditionally pushes **all four** `website/*.json` files every time
+it's run, not just whichever one you changed. Running it manually to
+push a Paynix-only fix pushed the *local* copies of the other three
+files too — which were stale (last generated 2026-07-14 in this case)
+because only the Paynix scripts had been run locally that session. This
+overwrote fresher data that the scheduled CI pipeline had put on Drive
+for PixlerPay, Paynix reseller/wallets, and PixlerPay's own merchant
+account. **Recovered by re-running `download-report` + `calculate`,
+`download-paynix`, and `download-pixlerpay-merchant` locally before the
+next `upload-to-drive`** so all four files were genuinely fresh at upload
+time. **Lesson: before running `upload-to-drive.js` manually (outside
+the full `npm run all` chain), check `ls -la website/*.json` timestamps
+first** — if any of the three you're not actively working on look stale,
+refresh them too (or run the full `npm run all` instead of a partial
+manual sequence) rather than letting a partial local state clobber
+Drive's freshest copy of an unrelated tab's data.
+
+**Separately, a genuine race hit while landing the rate change**: pushed
+the rate-card commit to git, but a scheduled `refresh.yml` CI run had
+already started (and finished) *before* the push landed, so it
+recalculated and re-uploaded Paynix commission using the still-old
+committed rate card, overwriting the fix that had just been uploaded
+manually. Fixed by re-running `calculate-paynix` + `upload-to-drive`
+locally *after* confirming the git push had landed. **If a rate/config
+change needs to show up live immediately, land the git commit first,
+then do the manual recalculate+upload — and check `gh run list` to make
+sure no scheduled run is sitting mid-flight between the two**, since a
+run that started before your commit lands will silently use the old
+values and can overwrite a same-day manual fix.
+
 ## Incremental fetch + 30-day retention, added 2026-07-14
 
 Every scrape script used to do a **full re-fetch + full recompute** on
@@ -641,6 +731,11 @@ pixlerpay-commission/
 │   ├── download-paynix-merchant-wallets.js  # Paynix: 9 merchant wallet "Load Requests" logs
 │   ├── download-pixlerpay-merchant.js  # PixlerPay's own Paynix merchant account
 │   ├── generate-commission-report.cjs  # formatted PixlerPay Excel report for any date range (npm run commission-report)
+│   ├── download-paynix-merchant-reports.js  # Paynix: 9 merchant portals, recent-window payout history (margin+AK calc)
+│   ├── calculate-paynix-commission.js  # Paynix: margin + AK commission calc, merge/prune
+│   ├── fetch-reseller-ledger-range.mjs  # one-off: reseller wallet ledger (COMMISSION entries) for an explicit date range
+│   ├── fetch-merchant-payouts-range.mjs  # one-off: full merchant payout history for an explicit date range
+│   ├── generate-paynix-crosscheck.cjs  # one-off: builds Paynix_Commission_CrossCheck_<range>.xlsx (ours vs Paynix-credited)
 │   ├── telegram-alert.js         # sends alerts for anything new, via Telegram Bot API
 │   ├── upload-to-drive.js        # push all results JSONs to Drive (OAuth)
 │   ├── gdrive-oauth-setup.js     # one-time OAuth consent flow
