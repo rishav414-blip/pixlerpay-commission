@@ -115,10 +115,16 @@
     "merchantId": "MER_1F18C5EDCA3B",
     "resellerPct": 0.7,
     "resellerFlatBelow1000": 10,
-    "onboardedPct": 1,
-    "onboardedFlatBelow1000": 11,
+    "onboardedPct": 1.1,
+    "onboardedFlatBelow1000": 12,
     "akPct": 0.05,
-    "group": "Rasheeya"
+    "ansPct": 0.2,
+    "ansFlatBelow1000": 1,
+    "group": "Rasheeya",
+    "rateHistory": [
+      { "effectiveFrom": null, "onboardedPct": 1, "onboardedFlatBelow1000": 11, "ansPct": null, "ansFlatBelow1000": null },
+      { "effectiveFrom": "2026-07-17", "onboardedPct": 1.1, "onboardedFlatBelow1000": 12, "ansPct": 0.2, "ansFlatBelow1000": 1 }
+    ]
   },
   {
     "sno": 12,

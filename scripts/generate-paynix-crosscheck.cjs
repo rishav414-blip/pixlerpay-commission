@@ -29,6 +29,31 @@ function calcMarginCommission(amount, rate) {
   return (amount * (rate.onboardedPct - rate.resellerPct)) / 100;
 }
 
+// Paynix merchant export dates look like "9/7/2026, 12:37:47 pm" (D/M/YYYY) —
+// mirrors parseToISODate in calculate-paynix-commission.js.
+function parseToISODate(value) {
+  if (!value) return null;
+  const s = String(value).trim();
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) {
+    const [, d, mo, y] = m;
+    return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+  const parsed = new Date(s);
+  if (!isNaN(parsed)) return parsed.toISOString().slice(0, 10);
+  return null;
+}
+
+// Mirrors resolveRateForDate in calculate-paynix-commission.js — keep in sync.
+function resolveRateForDate(rate, isoDate) {
+  if (!rate.rateHistory || !rate.rateHistory.length) return rate;
+  const applicable = rate.rateHistory
+    .filter((h) => !h.effectiveFrom || !isoDate || h.effectiveFrom <= isoDate)
+    .sort((a, b) => (a.effectiveFrom || '').localeCompare(b.effectiveFrom || ''));
+  const chosen = applicable[applicable.length - 1] || rate.rateHistory[0];
+  return { ...rate, ...chosen };
+}
+
 function isSuccess(status) {
   return String(status || '').trim().toUpperCase() === 'SUCCESS';
 }
@@ -98,7 +123,8 @@ async function main() {
 
     for (const p of successPayouts) {
       const ledgerEntry = ledgerByPayoutId.get(p.payoutId);
-      const ourCommission = Math.round(calcMarginCommission(p.amount, rate) * 100) / 100;
+      const effRate = resolveRateForDate(rate, parseToISODate(p.createdAt));
+      const ourCommission = Math.round(calcMarginCommission(p.amount, effRate) * 100) / 100;
       const matched = !!ledgerEntry;
       if (matched) {
         matchedCount++;

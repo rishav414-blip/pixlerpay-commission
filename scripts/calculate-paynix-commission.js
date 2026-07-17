@@ -58,6 +58,19 @@ function parseToISODate(value) {
   return null;
 }
 
+// Rate cards can carry a `rateHistory` array of { effectiveFrom, ...overrides }
+// for clients whose commercial terms changed mid-flight (effectiveFrom: null
+// = applies from the beginning). Picks the latest entry whose effectiveFrom
+// is on/before the transaction's date; falls back to the undated entry.
+function resolveRateForDate(rate, isoDate) {
+  if (!rate.rateHistory || !rate.rateHistory.length) return rate;
+  const applicable = rate.rateHistory
+    .filter((h) => !h.effectiveFrom || !isoDate || h.effectiveFrom <= isoDate)
+    .sort((a, b) => (a.effectiveFrom || '').localeCompare(b.effectiveFrom || ''));
+  const chosen = applicable[applicable.length - 1] || rate.rateHistory[0];
+  return { ...rate, ...chosen };
+}
+
 function calcMarginCommission(amount, rate) {
   if (amount <= 1000 && rate.onboardedFlatBelow1000 != null && rate.resellerFlatBelow1000 != null) {
     return rate.onboardedFlatBelow1000 - rate.resellerFlatBelow1000;
@@ -69,6 +82,12 @@ function calcAkCommission(amount, rate) {
   if (amount <= 1000) return 0;
   if (rate.akPct == null) return 0;
   return (amount * rate.akPct) / 100;
+}
+
+function calcAnsCommission(amount, rate) {
+  if (rate.ansPct == null) return 0;
+  if (amount <= 1000 && rate.ansFlatBelow1000 != null) return rate.ansFlatBelow1000;
+  return (amount * rate.ansPct) / 100;
 }
 
 async function main() {
@@ -119,24 +138,29 @@ async function main() {
   let totalSuccessfulTxns = 0;
   let totalCommission = 0;
   let totalAkCommission = 0;
-  for (const [merchantId, , amount] of prunedTransactions) {
-    const rate = rateByMerchant[merchantId];
-    if (!rate) continue;
+  let totalAnsCommission = 0;
+  for (const [merchantId, isoDate, amount] of prunedTransactions) {
+    const baseRate = rateByMerchant[merchantId];
+    if (!baseRate) continue;
+    const rate = resolveRateForDate(baseRate, isoDate);
     const commission = calcMarginCommission(amount, rate);
     const akCommission = calcAkCommission(amount, rate);
+    const ansCommission = calcAnsCommission(amount, rate);
 
     totalSuccessfulTxns += 1;
     totalCommission += commission;
     totalAkCommission += akCommission;
+    totalAnsCommission += ansCommission;
 
     if (!perMerchant.has(merchantId)) {
-      perMerchant.set(merchantId, { successfulTxns: 0, totalAmount: 0, totalCommission: 0, totalAkCommission: 0 });
+      perMerchant.set(merchantId, { successfulTxns: 0, totalAmount: 0, totalCommission: 0, totalAkCommission: 0, totalAnsCommission: 0 });
     }
     const agg = perMerchant.get(merchantId);
     agg.successfulTxns += 1;
     agg.totalAmount += amount;
     agg.totalCommission += commission;
     agg.totalAkCommission += akCommission;
+    agg.totalAnsCommission += ansCommission;
   }
 
   const clients = rates.map((rate) => {
@@ -144,17 +168,19 @@ async function main() {
       clientName: rate.clientName, merchantId: rate.merchantId, group: rate.group,
       resellerPct: rate.resellerPct, onboardedPct: rate.onboardedPct,
       resellerFlatBelow1000: rate.resellerFlatBelow1000, onboardedFlatBelow1000: rate.onboardedFlatBelow1000,
-      akPct: rate.akPct, marginPct: Math.round((rate.onboardedPct - rate.resellerPct) * 100) / 100,
+      akPct: rate.akPct, ansPct: rate.ansPct ?? null,
+      marginPct: Math.round((rate.onboardedPct - rate.resellerPct) * 100) / 100,
     };
     const agg = rate.merchantId ? perMerchant.get(rate.merchantId) : null;
     if (!agg) {
-      return { ...base, hasData: false, successfulTxns: 0, totalAmount: 0, totalCommission: 0, totalAkCommission: 0 };
+      return { ...base, hasData: false, successfulTxns: 0, totalAmount: 0, totalCommission: 0, totalAkCommission: 0, totalAnsCommission: 0 };
     }
     return {
       ...base, hasData: true, successfulTxns: agg.successfulTxns,
       totalAmount: Math.round(agg.totalAmount * 100) / 100,
       totalCommission: Math.round(agg.totalCommission * 100) / 100,
       totalAkCommission: Math.round(agg.totalAkCommission * 100) / 100,
+      totalAnsCommission: Math.round(agg.totalAnsCommission * 100) / 100,
     };
   });
 
@@ -163,6 +189,7 @@ async function main() {
     totalSuccessfulTxns,
     totalCommission: Math.round(totalCommission * 100) / 100,
     totalAkCommission: Math.round(totalAkCommission * 100) / 100,
+    totalAnsCommission: Math.round(totalAnsCommission * 100) / 100,
     clients: clients.sort((a, b) => b.totalCommission - a.totalCommission),
     // [merchantId, isoDate, amount, payoutId]
     transactions: prunedTransactions,
@@ -172,7 +199,7 @@ async function main() {
   fs.writeFileSync(OUTPUT_JSON, JSON.stringify(results, null, 2));
   console.log(`Paynix commission results written to ${OUTPUT_JSON}`);
   console.log(`Merged transaction log: ${mergedByPayoutId.size} total, ${prunedTransactions.length} within ${RETENTION_DAYS}-day retention window (cutoff ${cutoffISO}).`);
-  console.log(`Total successful txns: ${totalSuccessfulTxns}, Commission: Rs ${results.totalCommission}, AK Commission: Rs ${results.totalAkCommission}`);
+  console.log(`Total successful txns: ${totalSuccessfulTxns}, Commission: Rs ${results.totalCommission}, AK Commission: Rs ${results.totalAkCommission}, Ans Commission: Rs ${results.totalAnsCommission}`);
   const noData = clients.filter((c) => !c.hasData);
   if (noData.length) {
     console.warn(`${noData.length} client(s) with no data available: ${noData.map((c) => c.clientName).join(', ')}`);
