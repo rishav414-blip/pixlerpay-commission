@@ -973,7 +973,7 @@
     if (!PAYNIX_COMMISSION_DATA) return { totalCommission: 0, totalAkCommission: 0, clients: [] };
     const rateByMerchant = new Map(PAYNIX_COMMISSION_DATA.clients.filter((c) => c.merchantId).map((c) => [c.merchantId, c]));
     const perClient = new Map();
-    let totalCommission = 0, totalAkCommission = 0;
+    let totalCommission = 0, totalAkCommission = 0, totalVolume = 0;
     for (const [merchantId, isoDate, amount] of PAYNIX_COMMISSION_DATA.transactions) {
       if (paynixRangeFrom && (!isoDate || isoDate < paynixRangeFrom)) continue;
       if (paynixRangeTo && (!isoDate || isoDate > paynixRangeTo)) continue;
@@ -981,7 +981,7 @@
       if (!rate) continue;
       const commission = calcMarginCommission(amount, rate);
       const ak = calcAkCommission(amount, rate);
-      totalCommission += commission; totalAkCommission += ak;
+      totalCommission += commission; totalAkCommission += ak; totalVolume += amount;
       if (!perClient.has(merchantId)) perClient.set(merchantId, { ...rate, totalAmount: 0, totalCommission: 0, totalAkCommission: 0 });
       const agg = perClient.get(merchantId);
       agg.totalAmount += amount; agg.totalCommission += commission; agg.totalAkCommission += ak;
@@ -989,6 +989,7 @@
     return {
       totalCommission: Math.round(totalCommission * 100) / 100,
       totalAkCommission: Math.round(totalAkCommission * 100) / 100,
+      totalVolume: Math.round(totalVolume * 100) / 100,
       clients: Array.from(perClient.values()),
     };
   }
@@ -1033,7 +1034,7 @@
     const commissionRange = computePaynixCommissionForRange();
     document.getElementById('paynixLedgerStrip').innerHTML = `
       <div class="ledger-cell"><div class="ledger-label">Active Merchants</div><div class="ledger-figure">${d.summary.activeMerchants ?? '-'}</div></div>
-      <div class="ledger-cell"><div class="ledger-label">30-Day Payout Volume</div><div class="ledger-figure">${fmtINR(d.summary.last30Days.successVolume)}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Payout Volume (selected range)</div><div class="ledger-figure">${fmtINR(commissionRange.totalVolume)}</div></div>
       <div class="ledger-cell"><div class="ledger-label">Commission (selected range)</div><div class="ledger-figure accent">${fmtINR2(commissionRange.totalCommission)}</div></div>
       <div class="ledger-cell"><div class="ledger-label">AK Commission (selected range)</div><div class="ledger-figure accent">${fmtINR2(commissionRange.totalAkCommission)}</div></div>
     `;
