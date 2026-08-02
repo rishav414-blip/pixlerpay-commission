@@ -250,6 +250,10 @@
         <button class="btn-reset" id="paynixResetRangeBtn" type="button">Reset filters</button>
         <button class="btn-refresh" id="paynixRefreshBtn" type="button">↻ Refresh</button>
         <button class="btn-download" id="paynixDownloadBtn" type="button">⬇ Download Excel</button>
+        <label class="toolbar-count" style="cursor: pointer;">
+          <input type="checkbox" id="paynixHideSuspendedToggle" checked style="vertical-align: middle; margin-right: 4px;">
+          Hide suspended accounts
+        </label>
         <span class="toolbar-count" id="paynixRefreshNote">Re-fetches the latest synced snapshot from Drive</span>
         <span class="toolbar-count" id="paynixMetaLine"></span>
       </div>
@@ -886,6 +890,13 @@
   let PAYNIX_COMMISSION_DATA = null;
   let paynixRangeFrom = null;
   let paynixRangeTo = null;
+  // Reseller-portal status, independent of the rate-card hidden/suspended
+  // flags calculate-paynix-commission.js already applies server-side (that
+  // one drops clients from PAYNIX_COMMISSION_DATA.clients entirely). This
+  // toggle instead filters the merchant table below, which is sourced from
+  // d.merchants (paynix-results.json's live reseller-portal scrape) and
+  // would otherwise still list Suspended merchants with "no data" cells.
+  let paynixHideSuspended = true;
 
   const paynixLiveDot = document.getElementById('paynixLiveDot');
   const paynixLiveLabel = document.getElementById('paynixLiveLabel');
@@ -1064,7 +1075,9 @@
       (PAYNIX_COMMISSION_DATA?.clients || []).filter((c) => c.merchantId).map((c) => [c.merchantId, c])
     );
     const merchantTbody = document.getElementById('paynixMerchantTbody');
-    const merchants = [...d.merchants].sort((a, b) => b.wallet - a.wallet);
+    const merchants = [...d.merchants]
+      .filter((m) => !paynixHideSuspended || m.status !== 'Suspended')
+      .sort((a, b) => b.wallet - a.wallet);
     merchantTbody.innerHTML = merchants.map((m) => {
       const delta = changeByMerchant.get(m.merchantId);
       const addedCell = delta != null
@@ -1542,6 +1555,10 @@
   });
   document.getElementById('paynixRefreshBtn').addEventListener('click', fetchPaynixData);
   document.getElementById('paynixDownloadBtn').addEventListener('click', downloadPaynixExcel);
+  document.getElementById('paynixHideSuspendedToggle').addEventListener('change', (e) => {
+    paynixHideSuspended = e.target.checked;
+    if (PAYNIX_DATA) renderPaynix();
+  });
   document.getElementById('paynixRangeFrom').addEventListener('change', (e) => {
     paynixRangeFrom = e.target.value || null;
     clearPaynixDownloadError();
