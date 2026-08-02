@@ -1,6 +1,6 @@
 # Handoff — PixlerPay / Paynix Commission Dashboard
 
-Last updated: 2026-07-17 (Paynix commission cross-check report + reseller rate change to 0.70%, see below)
+Last updated: 2026-08-02 (Paynix rate-card refresh: 4 new merchants, hidden/suspended client exclusion, 6 new merchant-portal logins, "Hide suspended accounts" dashboard toggle, reconciliation-sheet workflow correction — see below)
 
 ## What this project is
 
@@ -464,6 +464,100 @@ sure no scheduled run is sitting mid-flight between the two**, since a
 run that started before your commit lands will silently use the old
 values and can overwrite a same-day manual fix.
 
+## Paynix rate-card refresh + hidden/suspended client exclusion, added 2026-08-02
+
+Re-read the live Paynix rate-card Google Sheet (see memory
+`pixlerpay-paynix-sheet` for the URL) and found two kinds of drift from
+`data/paynix-commission-rates.json`:
+
+1. **No pricing changes** for the existing 26 clients — every rate matched
+   the local card exactly.
+2. **4 brand-new merchants** in the sheet, not yet in the local rate card:
+   VIKZONE TECHNOLOGY, VYSHIKAX TECHNOLOGY, VELCYNTRA TECHNOLOGIES, ZYPHERON
+   TECHNOLOGY (all reseller 0.70%/₹10 flat, AK 0.20%, sno 27-30). Added to
+   `data/paynix-commission-rates.json`. All 4 turned out to already be live
+   on the Paynix reseller portal with real `merchantId`s (confirmed via a
+   fresh `download-paynix` scrape) — merchantIds were filled in once found.
+
+**New concept: `hidden` and `suspended` flags on rate-card entries.** The
+user's rate-card Google Sheet has rows the user hides in the sheet UI
+(Google Sheets row-hide, not a deleted row) — these represent clients no
+longer being actively tracked for commission, and the user asked that
+calculation and the dashboard treat them as if they don't exist, not just
+show them as zero. Checked via the Sheets API's `includeGridData: true` +
+`rowMetadata[].hiddenByUser` (the Drive MCP connector's `read_file_content`
+does NOT expose hidden-row state — must use the Sheets API directly with a
+real OAuth client, e.g. `data/gdrive-oauth-token.json`). Separately, the
+user asked that any merchant with a confirmed **Suspended** status on the
+Paynix reseller portal (the same `status` field `download-paynix.js` has
+always scraped into `website/paynix-results.json`'s `merchants[]`) also be
+excluded and removed from the dashboard, not just zeroed.
+
+**Implementation**: `data/paynix-commission-rates.json` entries can now
+carry `"hidden": true` (16 of 30 clients currently: SERVM, WESURE, WESERV,
+EIENON, SRKA, SOSHY, INDILOXY, APAS TECH POINT, N V CONNECT, XPASSPHERE,
+RUSTIC ODYSSEYS, FINFLEX, GLOBAL BOOKS TRADING, suvika, PPAY SOLUTION,
+ANTARIKSHA) and/or `"suspended": true` (2 currently: BITNEXY, Harmonious
+Techsol — confirmed Suspended via a fresh reseller-portal scrape).
+`scripts/calculate-paynix-commission.js` filters `allRates` down to
+`rates = allRates.filter(r => !r.hidden && !r.suspended)` **before**
+building `rateByMerchant` and the output `clients` array — excluded
+clients don't just get zeroed, they're entirely absent from
+`website/paynix-commission-results.json`'s `clients[]`, so they disappear
+from `docs/index.html`'s Commission-by-Client table automatically (it
+builds its roster from that array). **Final active set: 12 of 30 clients.**
+
+**Dashboard-only "Hide suspended accounts" toggle, docs/index.html**: the
+above server-side exclusion only covers the Commission-by-Client table.
+The **merchant table right below it** is sourced directly from
+`d.merchants` (the raw reseller-portal scrape in `paynix-results.json`,
+independent of the rate card) and would still show Suspended merchants
+with "no data" cells. Added a checked-by-default checkbox
+(`#paynixHideSuspendedToggle`) that filters `d.merchants` by
+`m.status !== 'Suspended'` client-side in `renderPaynix()` — independent
+mechanism from the rate-card `hidden`/`suspended` flags, both needed to
+fully hide a suspended merchant everywhere on the page.
+
+**6 new merchant-portal logins added** to
+`data/paynix-merchant-logins.json` (gitignored) and mirrored to the
+`PAYNIX_MERCHANT_LOGINS` GitHub secret (`gh secret set PAYNIX_MERCHANT_LOGINS
+--repo rishav414-blip/pixlerpay-commission < data/paynix-merchant-logins.json`
+— easy to forget, same footgun as other credential files): Elleaura,
+VIKZONE, VYSHIKAX, VELCYNTRA, ZYPHERON, and **Define Enterprises** (closing
+one of the long-standing "4 merchants with no portal login" gaps —
+3 remain: APAS TECH POINT, PPAY SOLUTION, Global Books Trading, but these
+are now also `hidden` so the gap is moot unless they're un-hidden later).
+Ran `download-paynix-merchant-reports` + `calculate-paynix` +
+`upload-to-drive` to get real data flowing — 11 of 12 active clients now
+have `hasData: true` (VELCYNTRA legitimately had 0 payouts in the 3-day
+fetch window, not a credentials problem).
+
+**Repeated the exact `upload-to-drive` stale-clobber footgun from
+[[pixlerpay-upload-to-drive-footgun]] in this same session** — ran
+`upload-to-drive` after only refreshing the Paynix side, clobbering Drive's
+fresh (same-day, CI-published) `commission-results.json` and
+`pixlerpay-merchant-results.json` with 16-day-stale local copies. Caught
+immediately by comparing `generatedAt`/`scrapedAt` against `gh run list`
+timestamps, fixed by re-running `download-report` + `calculate` +
+`download-pixlerpay-merchant` to regenerate real fresh data before
+re-uploading. **This footgun is easy to repeat even knowing about it —
+always check `ls -la website/*.json` timestamps (or just diff
+`generatedAt`/`scrapedAt` against the latest successful `gh run list`
+entry) immediately before any manual `upload-to-drive.js` call, no
+exceptions.**
+
+**Reconciliation-sheet workflow correction, 2026-08-02**: previously,
+finding new entries via a Sheet1 scan meant backfilling **both** the
+Sumeet detail tab (`sync-sumeet-records.mjs`) and the Master reconciliation
+sheet (`sync-master-reconciliation.mjs`). The user corrected this:
+**going forward, only run `sync-master-reconciliation.mjs`** when scanning
+Sheet1 for new entries — do not also write to the Sumeet sheet, even
+though the two-scripts-together pattern is still what's documented above
+in this file and in the `paynix-reconciliation-analyst` agent as of this
+writing. If asked to "update the records" and it's ambiguous whether both
+sheets are meant, ask rather than defaulting to the old both-sheets
+pattern.
+
 ## Incremental fetch + 30-day retention, added 2026-07-14
 
 Every scrape script used to do a **full re-fetch + full recompute** on
@@ -700,7 +794,7 @@ Individual steps can also be run separately (`npm run download-report`, `npm run
 4. **3 PixlerPay clients showed zero transactions** in an earlier scrape (Elleaura, FINFLEX, WESURE cybertech/infra/innovations) — flagged as worth a manual sanity check since they're marked Active/Onboarding in the rate sheet, but not investigated further.
 5. **Paynix's aggregate "Wallet Change" column is still inferred from balance deltas** between runs (current − previous), not a real ledger — this is separate from (and coarser than) the per-merchant "Load Requests" log, which IS a real log for the 9 merchants with credentials.
 6. **One pre-existing scraping quirk, not yet fixed**: at least one failed payout's `reason` field scraped as the literal string `"FAILED"` instead of a real gateway message — a minor regex miss in `scrapeFailedPayouts()`'s reason-extraction pattern. Low priority, cosmetic (doesn't affect the commission math), noticed while testing Telegram alert formatting.
-7. **Only 9 of 13 Paynix merchants have merchant-portal logins** (`data/paynix-merchant-logins.json`, gitignored). Missing: APAS TECH POINT, PPAY SOLUTION, Global Books Trading, Define Enterprises. Their rows on the Paynix tab show no "Recent" wallet-log toggle since there's nothing to scrape. Add credentials in the same JSON shape (and update the `PAYNIX_MERCHANT_LOGINS` GitHub secret) to close the gap.
+7. **~~Only 9 of 13 Paynix merchants have merchant-portal logins~~ — closed 2026-08-02.** Now 15 merchants have logins (added Elleaura, VIKZONE, VYSHIKAX, VELCYNTRA, ZYPHERON, Define Enterprises). Remaining gap: APAS TECH POINT, PPAY SOLUTION, Global Books Trading have no login — but all 3 are now `hidden` in the rate card anyway, so this is moot unless they're un-hidden later. Add credentials in the same JSON shape (and update the `PAYNIX_MERCHANT_LOGINS` GitHub secret) if that happens.
 8. **Dashboard's stale-badge threshold (20 min) doesn't match real automation cadence** (~60-90+ min) — see the Automation section's note. Should be reconciled once item 1 is fixed and real cadence is known.
 9. **One transient CI failure observed** (of ~20 runs so far): `wallet-alert.yml` run on 2026-07-11 23:35 UTC failed because the Paynix reseller login page timed out twice in a row (60s each, via the retry already built into `gotoWithRetry`). Self-healed on the next run — not a recurring pattern, just noted for awareness. If it becomes frequent, the retry timeout/count may need tuning.
 
