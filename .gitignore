@@ -13,6 +13,7 @@ data/raw-reports/
 data/gdrive-service-account.json
 data/gdrive-oauth-client.json
 data/gdrive-oauth-token.json
+data/gdrive-oauth-token-records.json
 website/commission-results.json
 website/paynix-results.json
 website/pixlerpay-merchant-results.json
@@ -24,4 +25,5 @@ data/paynix-merchant-reports/
 data/paynix-merchant-reports-range/
 data/reseller-ledger-*.json
 data/pixlerpay-telegram-previous.json
+data/_export-cache/
 !data/.gitkeep

@@ -8,7 +8,8 @@
     "onboardedPct": 1.2,
     "onboardedFlatBelow1000": 12,
     "akPct": 0.1,
-    "group": "SERVM"
+    "group": "SERVM",
+    "hidden": true
   },
   {
     "sno": 2,
@@ -19,7 +20,8 @@
     "onboardedPct": 1.2,
     "onboardedFlatBelow1000": 12,
     "akPct": 0.1,
-    "group": "SERVM"
+    "group": "SERVM",
+    "hidden": true
   },
   {
     "sno": 3,
@@ -30,7 +32,8 @@
     "onboardedPct": 1.2,
     "onboardedFlatBelow1000": 12,
     "akPct": 0.1,
-    "group": "SERVM"
+    "group": "SERVM",
+    "hidden": true
   },
   {
     "sno": 4,
@@ -41,12 +44,13 @@
     "onboardedPct": 1.2,
     "onboardedFlatBelow1000": 12,
     "akPct": 0.1,
-    "group": null
+    "group": null,
+    "hidden": true
   },
   {
     "sno": 5,
     "clientName": "Elleaura cybertech services pvt ltd",
-    "merchantId": null,
+    "merchantId": "MER_F144F0EF8E14",
     "resellerPct": 0.7,
     "resellerFlatBelow1000": 10,
     "onboardedPct": 1,
@@ -135,7 +139,8 @@
     "onboardedPct": 0.9,
     "onboardedFlatBelow1000": 11,
     "akPct": 0.05,
-    "group": "Rasheeya"
+    "group": "Rasheeya",
+    "hidden": true
   },
   {
     "sno": 13,
@@ -146,7 +151,8 @@
     "onboardedPct": 0.9,
     "onboardedFlatBelow1000": 11,
     "akPct": 0.05,
-    "group": "Rasheeya"
+    "group": "Rasheeya",
+    "hidden": true
   },
   {
     "sno": 14,
@@ -157,7 +163,8 @@
     "onboardedPct": 0.9,
     "onboardedFlatBelow1000": 11,
     "akPct": 0.05,
-    "group": "Rasheeya"
+    "group": "Rasheeya",
+    "hidden": true
   },
   {
     "sno": 15,
@@ -168,7 +175,8 @@
     "onboardedPct": 0.9,
     "onboardedFlatBelow1000": 11,
     "akPct": 0.05,
-    "group": "Rasheeya"
+    "group": "Rasheeya",
+    "hidden": true
   },
   {
     "sno": 16,
@@ -190,7 +198,8 @@
     "onboardedPct": 1,
     "onboardedFlatBelow1000": 12,
     "akPct": 0.05,
-    "group": "Dulaara/ABS"
+    "group": "Dulaara/ABS",
+    "hidden": true
   },
   {
     "sno": 18,
@@ -201,7 +210,8 @@
     "onboardedPct": 1,
     "onboardedFlatBelow1000": 12,
     "akPct": 0.05,
-    "group": "Dulaara/ABS"
+    "group": "Dulaara/ABS",
+    "hidden": true
   },
   {
     "sno": 19,
@@ -212,7 +222,8 @@
     "onboardedPct": 1,
     "onboardedFlatBelow1000": 12,
     "akPct": 0.05,
-    "group": "Dulaara/ABS"
+    "group": "Dulaara/ABS",
+    "hidden": true
   },
   {
     "sno": 20,
@@ -223,7 +234,8 @@
     "onboardedPct": 1.1,
     "onboardedFlatBelow1000": 12,
     "akPct": 0.1,
-    "group": "SMartNXT"
+    "group": "SMartNXT",
+    "suspended": true
   },
   {
     "sno": 21,
@@ -234,7 +246,8 @@
     "onboardedPct": 1.1,
     "onboardedFlatBelow1000": 12,
     "akPct": 0.1,
-    "group": "SMartNXT"
+    "group": "SMartNXT",
+    "hidden": true
   },
   {
     "sno": 22,
@@ -245,7 +258,8 @@
     "onboardedPct": 1,
     "onboardedFlatBelow1000": 12,
     "akPct": 0.05,
-    "group": "SMartNXT"
+    "group": "SMartNXT",
+    "hidden": true
   },
   {
     "sno": 23,
@@ -256,18 +270,20 @@
     "onboardedPct": 1,
     "onboardedFlatBelow1000": 11,
     "akPct": 0.05,
-    "group": "SMartNXT"
+    "group": "SMartNXT",
+    "hidden": true
   },
   {
     "sno": 24,
     "clientName": "Harmonious Techsol Private Limited",
-    "merchantId": null,
+    "merchantId": "MER_2D481D76516F",
     "resellerPct": 0.7,
     "resellerFlatBelow1000": 10,
     "onboardedPct": 1.1,
     "onboardedFlatBelow1000": 12,
     "akPct": 0.1,
-    "group": "SMartNXT"
+    "group": "SMartNXT",
+    "suspended": true
   },
   {
     "sno": 25,
@@ -278,7 +294,8 @@
     "onboardedPct": 1,
     "onboardedFlatBelow1000": 12,
     "akPct": 0.05,
-    "group": "SMartNXT"
+    "group": "SMartNXT",
+    "hidden": true
   },
   {
     "sno": 26,
@@ -289,6 +306,51 @@
     "onboardedPct": 1.1,
     "onboardedFlatBelow1000": 12,
     "akPct": 0.1,
-    "group": "SMartNXT"
+    "group": "SMartNXT",
+    "hidden": true
+  },
+  {
+    "sno": 27,
+    "clientName": "VIKZONE TECHNOLOGY PRIVATE LIMITED",
+    "merchantId": "MER_EB9A8C4D9025",
+    "resellerPct": 0.7,
+    "resellerFlatBelow1000": 10,
+    "onboardedPct": 1.5,
+    "onboardedFlatBelow1000": 13,
+    "akPct": 0.2,
+    "group": null
+  },
+  {
+    "sno": 28,
+    "clientName": "VYSHIKAX TECHNOLOGY PRIVATE LIMITED",
+    "merchantId": "MER_EB1BE5D25983",
+    "resellerPct": 0.7,
+    "resellerFlatBelow1000": 10,
+    "onboardedPct": 1.2,
+    "onboardedFlatBelow1000": 12,
+    "akPct": 0.2,
+    "group": null
+  },
+  {
+    "sno": 29,
+    "clientName": "VELCYNTRA TECHNOLOGIES PRIVATE LIMITED",
+    "merchantId": "MER_810B49283330",
+    "resellerPct": 0.7,
+    "resellerFlatBelow1000": 10,
+    "onboardedPct": 1.2,
+    "onboardedFlatBelow1000": 12,
+    "akPct": 0.2,
+    "group": null
+  },
+  {
+    "sno": 30,
+    "clientName": "ZYPHERON TECHNOLOGY PRIVATE LIMITED",
+    "merchantId": "MER_19F368135CE0",
+    "resellerPct": 0.7,
+    "resellerFlatBelow1000": 10,
+    "onboardedPct": 1.2,
+    "onboardedFlatBelow1000": 12,
+    "akPct": 0.2,
+    "group": null
   }
 ]

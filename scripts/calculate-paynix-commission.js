@@ -91,7 +91,18 @@ function calcAnsCommission(amount, rate) {
 }
 
 async function main() {
-  const rates = JSON.parse(fs.readFileSync(RATES_FILE, 'utf-8'));
+  const allRates = JSON.parse(fs.readFileSync(RATES_FILE, 'utf-8'));
+  // `hidden` = rows the client has hidden in their own rate-card sheet (not
+  // currently active for this reporting cycle); `suspended` = confirmed
+  // Suspended status on the Paynix reseller portal. Both are excluded
+  // entirely from calculation and from the output client list — not just
+  // zeroed out — per explicit instruction, so they also disappear from the
+  // dashboard rather than lingering as a "no data" row.
+  const rates = allRates.filter((r) => !r.hidden && !r.suspended);
+  const excludedCount = allRates.length - rates.length;
+  if (excludedCount) {
+    console.log(`Excluding ${excludedCount} hidden/suspended client(s) from calculation: ${allRates.filter((r) => r.hidden || r.suspended).map((r) => r.clientName).join(', ')}`);
+  }
   const rateByMerchant = {};
   for (const r of rates) if (r.merchantId) rateByMerchant[r.merchantId] = r;
 
