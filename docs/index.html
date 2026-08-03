@@ -279,6 +279,7 @@
               <th class="num">Volume (₹)</th>
               <th class="num">Commission (₹)</th>
               <th class="num">AK Commission (₹)</th>
+              <th class="num">Ans Commission (₹)</th>
               <th class="num">Wallet Balance (₹)</th>
               <th class="num">Wallet Change (₹)</th>
               <th>Status</th>
@@ -943,19 +944,21 @@
     if (!PAYNIX_COMMISSION_DATA) return null;
     const rate = PAYNIX_COMMISSION_DATA.clients.find((c) => c.merchantId === merchantId);
     if (!rate || !rate.hasData) return null;
-    let totalAmount = 0, totalCommission = 0, totalAkCommission = 0, successfulTxns = 0;
+    let totalAmount = 0, totalCommission = 0, totalAkCommission = 0, totalAnsCommission = 0, successfulTxns = 0;
     for (const [va, isoDate, amount] of PAYNIX_COMMISSION_DATA.transactions) {
       if (va !== merchantId) continue;
       if (paynixRangeFrom && (!isoDate || isoDate < paynixRangeFrom)) continue;
       if (paynixRangeTo && (!isoDate || isoDate > paynixRangeTo)) continue;
       const commission = calcMarginCommission(amount, rate);
       const ak = calcAkCommission(amount, rate);
-      totalAmount += amount; totalCommission += commission; totalAkCommission += ak; successfulTxns += 1;
+      const ans = calcAnsCommission(amount, rate);
+      totalAmount += amount; totalCommission += commission; totalAkCommission += ak; totalAnsCommission += ans; successfulTxns += 1;
     }
     return {
       totalAmount: Math.round(totalAmount * 100) / 100,
       totalCommission: Math.round(totalCommission * 100) / 100,
       totalAkCommission: Math.round(totalAkCommission * 100) / 100,
+      totalAnsCommission: Math.round(totalAnsCommission * 100) / 100,
       successfulTxns,
     };
   }
@@ -978,13 +981,21 @@
     if (rate.akPct == null) return 0;
     return (amount * rate.akPct) / 100;
   }
+  // Same rule as calculate-paynix-commission.js's calcAnsCommission — a flat
+  // Rs value below 1000 (per-client, e.g. Rs2 for VIKZONE, Rs1 for the other
+  // Ansh-part clients) if ansFlatBelow1000 is set, else the percentage above.
+  function calcAnsCommission(amount, rate) {
+    if (rate.ansPct == null) return 0;
+    if (amount <= 1000 && rate.ansFlatBelow1000 != null) return rate.ansFlatBelow1000;
+    return (amount * rate.ansPct) / 100;
+  }
 
   // Aggregates every client with data for the ledger strip totals.
   function computePaynixCommissionForRange() {
     if (!PAYNIX_COMMISSION_DATA) return { totalCommission: 0, totalAkCommission: 0, clients: [] };
     const rateByMerchant = new Map(PAYNIX_COMMISSION_DATA.clients.filter((c) => c.merchantId).map((c) => [c.merchantId, c]));
     const perClient = new Map();
-    let totalCommission = 0, totalAkCommission = 0, totalVolume = 0;
+    let totalCommission = 0, totalAkCommission = 0, totalAnsCommission = 0, totalVolume = 0;
     for (const [merchantId, isoDate, amount] of PAYNIX_COMMISSION_DATA.transactions) {
       if (paynixRangeFrom && (!isoDate || isoDate < paynixRangeFrom)) continue;
       if (paynixRangeTo && (!isoDate || isoDate > paynixRangeTo)) continue;
@@ -992,14 +1003,16 @@
       if (!rate) continue;
       const commission = calcMarginCommission(amount, rate);
       const ak = calcAkCommission(amount, rate);
-      totalCommission += commission; totalAkCommission += ak; totalVolume += amount;
-      if (!perClient.has(merchantId)) perClient.set(merchantId, { ...rate, totalAmount: 0, totalCommission: 0, totalAkCommission: 0 });
+      const ans = calcAnsCommission(amount, rate);
+      totalCommission += commission; totalAkCommission += ak; totalAnsCommission += ans; totalVolume += amount;
+      if (!perClient.has(merchantId)) perClient.set(merchantId, { ...rate, totalAmount: 0, totalCommission: 0, totalAkCommission: 0, totalAnsCommission: 0 });
       const agg = perClient.get(merchantId);
-      agg.totalAmount += amount; agg.totalCommission += commission; agg.totalAkCommission += ak;
+      agg.totalAmount += amount; agg.totalCommission += commission; agg.totalAkCommission += ak; agg.totalAnsCommission += ans;
     }
     return {
       totalCommission: Math.round(totalCommission * 100) / 100,
       totalAkCommission: Math.round(totalAkCommission * 100) / 100,
+      totalAnsCommission: Math.round(totalAnsCommission * 100) / 100,
       totalVolume: Math.round(totalVolume * 100) / 100,
       clients: Array.from(perClient.values()),
     };
@@ -1048,6 +1061,7 @@
       <div class="ledger-cell"><div class="ledger-label">Payout Volume (selected range)</div><div class="ledger-figure">${fmtINR(commissionRange.totalVolume)}</div></div>
       <div class="ledger-cell"><div class="ledger-label">Commission (selected range)</div><div class="ledger-figure accent">${fmtINR2(commissionRange.totalCommission)}</div></div>
       <div class="ledger-cell"><div class="ledger-label">AK Commission (selected range)</div><div class="ledger-figure accent">${fmtINR2(commissionRange.totalAkCommission)}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Ans Commission (selected range)</div><div class="ledger-figure accent">${fmtINR2(commissionRange.totalAnsCommission)}</div></div>
     `;
 
     const failedAlert = document.getElementById('paynixFailedAlert');
@@ -1088,8 +1102,9 @@
       const volumeCell = range ? fmtINR(range.totalAmount) : '<span class="client-va">no data</span>';
       const commissionCell = range ? fmtINR2(range.totalCommission) : '<span class="client-va">no data</span>';
       const akCell = range ? fmtINR2(range.totalAkCommission) : '<span class="client-va">no data</span>';
+      const ansCell = range ? fmtINR2(range.totalAnsCommission) : '<span class="client-va">no data</span>';
       const pctLine = c
-        ? `<div class="client-va">${c.onboardedPct.toFixed(2)}% onboarded − ${c.resellerPct.toFixed(2)}% reseller = ${c.marginPct.toFixed(2)}% margin · AK ${(c.akPct ?? 0).toFixed(2)}%</div>`
+        ? `<div class="client-va">${c.onboardedPct.toFixed(2)}% onboarded − ${c.resellerPct.toFixed(2)}% reseller = ${c.marginPct.toFixed(2)}% margin · AK ${(c.akPct ?? 0).toFixed(2)}% · Ansh ${(c.ansPct ?? 0).toFixed(2)}%</div>`
         : '';
       return `
       <tr>
@@ -1097,6 +1112,7 @@
         <td class="num">${volumeCell}</td>
         <td class="num commission-cell">${commissionCell}</td>
         <td class="num">${akCell}</td>
+        <td class="num">${ansCell}</td>
         <td class="num">${fmtINR2(m.wallet)}</td>
         <td class="num">${addedCell}</td>
         <td><span class="status-pill ${m.status === 'Active' ? 'active' : 'other'}">${m.status}</span></td>
@@ -1211,6 +1227,7 @@
         { key: 'onboardedPct', width: 12 }, { key: 'onboardedFlat', width: 12 },
         { key: 'marginPct', width: 11 }, { key: 'volume', width: 16 }, { key: 'commission', width: 13 },
         { key: 'akPct', width: 10 }, { key: 'akCommission', width: 14 },
+        { key: 'ansPct', width: 10 }, { key: 'ansCommission', width: 14 },
       ];
       ws.columns = COLS;
       const NUM_COLS = COLS.length;
@@ -1219,6 +1236,7 @@
       const HEADER_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC6E0B4' } };
       const COMMISSION_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
       const AK_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFBDD7EE' } };
+      const ANS_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2C6F2' } };
 
       const TITLE = `Paynix Volume ${formatDateLabel(paynixRangeFrom)} to ${formatDateLabel(paynixRangeTo)}`;
       ws.mergeCells(1, 1, 1, NUM_COLS);
@@ -1233,7 +1251,7 @@
         'S.NO.', 'Client Name', 'Sumeet(reseller) Pricing', 'Sumeet(reseller) Pricing below 1000',
         'Onboarded Pricing', 'Onboarded Pricing for 100-200', 'Diff Pricing',
         `Volume Duration ${formatDateLabel(paynixRangeFrom)} to ${formatDateLabel(paynixRangeTo)}`, 'Commission',
-        'AK %', 'AK Commission',
+        'AK %', 'AK Commission', 'Ansh %', 'Ansh Commission',
       ];
       const headerRow = ws.getRow(2);
       headerLabels.forEach((label, i) => {
@@ -1261,6 +1279,8 @@
         excelRow.getCell(9).value = Math.round(c.totalCommission * 100) / 100;
         excelRow.getCell(10).value = c.akPct != null ? c.akPct / 100 : null;
         excelRow.getCell(11).value = Math.round(c.totalAkCommission * 100) / 100;
+        excelRow.getCell(12).value = c.ansPct != null ? c.ansPct / 100 : null;
+        excelRow.getCell(13).value = Math.round(c.totalAnsCommission * 100) / 100;
 
         excelRow.getCell(3).numFmt = '0.00%';
         excelRow.getCell(5).numFmt = '0.00%';
@@ -1269,6 +1289,8 @@
         excelRow.getCell(9).numFmt = '#,##0.00';
         excelRow.getCell(10).numFmt = '0.00%';
         excelRow.getCell(11).numFmt = '#,##0.00';
+        excelRow.getCell(12).numFmt = '0.00%';
+        excelRow.getCell(13).numFmt = '#,##0.00';
 
         for (let cc = 1; cc <= NUM_COLS; cc++) {
           const cell = excelRow.getCell(cc);
@@ -1279,6 +1301,8 @@
         excelRow.getCell(9).font = { bold: true };
         excelRow.getCell(11).fill = AK_FILL;
         excelRow.getCell(11).font = { bold: true };
+        excelRow.getCell(13).fill = ANS_FILL;
+        excelRow.getCell(13).font = { bold: true };
         r++;
       }
 
@@ -1295,10 +1319,12 @@
         excelRow.getCell(6).value = c.onboardedFlatBelow1000 != null ? `Rs ${c.onboardedFlatBelow1000}` : '';
         excelRow.getCell(7).value = c.marginPct != null ? c.marginPct / 100 : null;
         excelRow.getCell(10).value = c.akPct != null ? c.akPct / 100 : null;
+        excelRow.getCell(12).value = c.ansPct != null ? c.ansPct / 100 : null;
         excelRow.getCell(3).numFmt = '0.00%';
         excelRow.getCell(5).numFmt = '0.00%';
         excelRow.getCell(7).numFmt = '0.00%';
         excelRow.getCell(10).numFmt = '0.00%';
+        excelRow.getCell(12).numFmt = '0.00%';
         for (let cc = 1; cc <= NUM_COLS; cc++) {
           const cell = excelRow.getCell(cc);
           cell.border = allBorders;
@@ -1342,6 +1368,16 @@
       totalAkCell.fill = AK_FILL;
       totalAkCell.border = allBorders;
       totalAkCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      ws.getCell(totalRowIdx, 12).border = allBorders;
+
+      const totalAnsCell = ws.getCell(totalRowIdx, 13);
+      totalAnsCell.value = range.totalAnsCommission;
+      totalAnsCell.numFmt = '#,##0.00';
+      totalAnsCell.font = { bold: true };
+      totalAnsCell.fill = ANS_FILL;
+      totalAnsCell.border = allBorders;
+      totalAnsCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
       ws.views = [{ state: 'frozen', ySplit: 2 }];
 

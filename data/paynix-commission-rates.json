@@ -123,11 +123,11 @@
     "onboardedFlatBelow1000": 12,
     "akPct": 0.05,
     "ansPct": 0.2,
-    "ansFlatBelow1000": 1,
+    "ansFlatBelow1000": 11,
     "group": "Rasheeya",
     "rateHistory": [
       { "effectiveFrom": null, "onboardedPct": 1, "onboardedFlatBelow1000": 11, "ansPct": null, "ansFlatBelow1000": null },
-      { "effectiveFrom": "2026-07-17", "onboardedPct": 1.1, "onboardedFlatBelow1000": 12, "ansPct": 0.2, "ansFlatBelow1000": 1 }
+      { "effectiveFrom": "2026-07-17", "onboardedPct": 1.1, "onboardedFlatBelow1000": 12, "ansPct": 0.2, "ansFlatBelow1000": 11 }
     ]
   },
   {
@@ -317,7 +317,9 @@
     "resellerFlatBelow1000": 10,
     "onboardedPct": 1.5,
     "onboardedFlatBelow1000": 13,
-    "akPct": 0.2,
+    "akPct": null,
+    "ansPct": 0.6,
+    "ansFlatBelow1000": 2,
     "group": null
   },
   {
@@ -328,7 +330,9 @@
     "resellerFlatBelow1000": 10,
     "onboardedPct": 1.2,
     "onboardedFlatBelow1000": 12,
-    "akPct": 0.2,
+    "akPct": null,
+    "ansPct": 0.3,
+    "ansFlatBelow1000": 1,
     "group": null
   },
   {
@@ -339,7 +343,9 @@
     "resellerFlatBelow1000": 10,
     "onboardedPct": 1.2,
     "onboardedFlatBelow1000": 12,
-    "akPct": 0.2,
+    "akPct": null,
+    "ansPct": 0.3,
+    "ansFlatBelow1000": 1,
     "group": null
   },
   {
@@ -350,7 +356,9 @@
     "resellerFlatBelow1000": 10,
     "onboardedPct": 1.2,
     "onboardedFlatBelow1000": 12,
-    "akPct": 0.2,
+    "akPct": null,
+    "ansPct": 0.3,
+    "ansFlatBelow1000": 1,
     "group": null
   }
 ]
