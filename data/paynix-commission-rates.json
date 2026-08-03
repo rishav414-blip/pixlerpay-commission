@@ -88,7 +88,7 @@
     "resellerFlatBelow1000": 10,
     "onboardedPct": 0.9,
     "onboardedFlatBelow1000": 11,
-    "akPct": 0.05,
+    "akPct": null,
     "group": "Curiobyte"
   },
   {
@@ -99,7 +99,7 @@
     "resellerFlatBelow1000": 10,
     "onboardedPct": 0.9,
     "onboardedFlatBelow1000": 11,
-    "akPct": 0.05,
+    "akPct": null,
     "group": "Curiobyte"
   },
   {
@@ -110,7 +110,7 @@
     "resellerFlatBelow1000": 10,
     "onboardedPct": 0.9,
     "onboardedFlatBelow1000": 11,
-    "akPct": 0.05,
+    "akPct": null,
     "group": "Curiobyte"
   },
   {

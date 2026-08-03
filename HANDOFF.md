@@ -1,6 +1,7 @@
+
 # Handoff — PixlerPay / Paynix Commission Dashboard
 
-Last updated: 2026-08-02 (Paynix rate-card refresh: 4 new merchants, hidden/suspended client exclusion, 6 new merchant-portal logins, "Hide suspended accounts" dashboard toggle, reconciliation-sheet workflow correction — see below)
+Last updated: 2026-08-03 (Ansh Part commission added to the dashboard + AK/Ansh rate-card corrections, AK removed for 3 clients — see below)
 
 ## What this project is
 
@@ -557,6 +558,55 @@ in this file and in the `paynix-reconciliation-analyst` agent as of this
 writing. If asked to "update the records" and it's ambiguous whether both
 sheets are meant, ask rather than defaulting to the old both-sheets
 pattern.
+
+## Ansh Part commission added to dashboard + rate-card corrections, 2026-08-03
+
+The rate card and calculation script (`calculate-paynix-commission.js`)
+already had `ansPct`/`ansFlatBelow1000` fields and a `calcAnsCommission()`
+function (added 2026-07-17 for RASHEEYA only), but the dashboard
+(`docs/index.html`) never surfaced it — no column, no ledger total, no
+Excel export field. Added all three, mirroring the existing AK Commission
+pattern exactly (same fill-color convention, same per-merchant/per-range
+aggregation functions).
+
+**Rate-card mislabeling found and fixed while doing this**: re-read the
+live Google Sheet (see `pixlerpay-paynix-sheet` memory for the URL) via
+the Sheets API directly (`includeGridData: true`, more reliable than the
+Drive MCP connector's markdown export, which had misaligned two
+unlabeled columns next to "Ansh Part" during a previous read). Found:
+
+- **VIKZONE, VYSHIKAX, VELCYNTRA, ZYPHERON** (added 2026-08-02) had been
+  given `akPct: 0.2` each — but the sheet's AK column is actually blank
+  for all four; their real extra cut is Ansh Part (0.60% / 0.30% / 0.30%
+  / 0.30% respectively). Corrected: `akPct: null`, added `ansPct` per the
+  sheet, plus user-specified flat-below-1000 overrides (VIKZONE Rs2, the
+  other three Rs1 each — not in the sheet, given directly by the user).
+- **RASHEEYA's `ansFlatBelow1000` was Rs 1**, but the raw grid data shows
+  Rs 11 in that column (confirmed no merged cells affect it). Fixed in
+  both the base fields and the `rateHistory` entry effective 2026-07-17.
+- **AK removed entirely (retroactively) for DIGIROUTE, Define
+  Enterprises, and Sunshine Global**: comparing two sheet reads same day
+  showed their AK% column went from 0.05% to blank, with no Ansh Part
+  added in its place — confirmed with the user this is a real removal,
+  not a data-entry gap, and applies to the whole 30-day retention window
+  (not date-split via `rateHistory`, unlike RASHEEYA's onboarded-rate
+  change). Set `akPct: null` for all three. This dropped total AK
+  Commission from Rs108,610.57 to Rs46,705.51 in the same `calculate-paynix`
+  run — these three are high-volume merchants (DIGIROUTE ~microwave,
+  Sunshine Global, Define Enterprises all thousands of payouts/month).
+
+**If the Ansh Part or AK columns change again**: re-fetch via the Sheets
+API (`includeGridData: true`, NOT the Drive MCP `read_file_content`
+markdown export — it has misaligned unlabeled columns before) and diff
+against `data/paynix-commission-rates.json` client-by-client, same
+technique used both times above.
+
+After each rate-card edit: ran `npm run calculate-paynix` locally, then
+uploaded with the stale-clobber-avoiding pattern (temporarily `mv`ing the
+other three `website/*.json` files out of the folder before
+`upload-to-drive.js`, then moving them back) since the other three
+sources were stale relative to same-day CI runs at the time — see
+[[pixlerpay-upload-to-drive-footgun]].
 
 ## Incremental fetch + 30-day retention, added 2026-07-14
 
