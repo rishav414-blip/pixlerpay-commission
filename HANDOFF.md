@@ -581,9 +581,22 @@ unlabeled columns next to "Ansh Part" during a previous read). Found:
   / 0.30% respectively). Corrected: `akPct: null`, added `ansPct` per the
   sheet, plus user-specified flat-below-1000 overrides (VIKZONE Rs2, the
   other three Rs1 each — not in the sheet, given directly by the user).
-- **RASHEEYA's `ansFlatBelow1000` was Rs 1**, but the raw grid data shows
-  Rs 11 in that column (confirmed no merged cells affect it). Fixed in
-  both the base fields and the `rateHistory` entry effective 2026-07-17.
+- **RASHEEYA's `ansFlatBelow1000` false alarm, corrected**: initially
+  mis-read the sheet's "Rs 11" in the unlabeled column next to "Ansh
+  Part" as an Ansh flat-rate override and changed `ansFlatBelow1000`
+  from 1 to 11. That column is actually the **same per-client free-text
+  notes column** HANDOFF.md already flags as "explicitly told to be
+  ignored" (it holds "divided by 3", "all own", "by 2", etc. for other
+  rows — "Rs 11" for RASHEEYA is almost certainly a note about the old
+  pre-2026-07-17 onboarded-flat rate, not a data field). **Reverted back
+  to `ansFlatBelow1000: 1`** — confirmed correct (and originally set
+  deliberately in the 2026-07-17 commit, "Ans margin 0.20%/Rs1") — and
+  the user separately re-confirmed the underlying math directly: reseller
+  flat Rs10, onboarded flat Rs12 (margin commission Rs2), Ansh flat Rs1,
+  all below Rs1000. **Lesson: an unlabeled sheet column with a number in
+  it is not automatically a rate field — check whether other rows in
+  that same column hold free-text notes before treating any one row's
+  value as data.**
 - **AK removed entirely (retroactively) for DIGIROUTE, Define
   Enterprises, and Sunshine Global**: comparing two sheet reads same day
   showed their AK% column went from 0.05% to blank, with no Ansh Part
