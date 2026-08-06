@@ -1,0 +1,32 @@
+name: Auto-rerun failed pipeline runs
+
+# Watches refresh.yml and wallet-alert.yml for failures and reruns the
+# failed jobs exactly once. Added 2026-08-06 after a GitHub-wide Actions
+# outage ("Failed to resolve action download info: Service Unavailable")
+# hit two manual runs in a row — that class of failure is on GitHub's
+# side, not ours, and self-resolves within minutes, but was otherwise
+# requiring a human to notice and manually re-trigger. run_attempt guards
+# against retry loops: a run that fails again after already being
+# retried once is left alone (likely a real bug, not transient infra).
+
+on:
+  workflow_run:
+    workflows:
+      - Refresh commission data
+      - Paynix wallet top-up alert
+    types:
+      - completed
+
+permissions:
+  actions: write
+
+jobs:
+  rerun-if-failed:
+    if: github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.run_attempt == 1
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rerun failed jobs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: gh run rerun "$RUN_ID" --failed --repo ${{ github.repository }}
