@@ -8,7 +8,12 @@ on:
   workflow_dispatch: {} # manual "Run workflow" button in the Actions tab
 
 concurrency:
-  group: refresh
+  # Shared with wallet-alert.yml so the two workflows never write/upload
+  # website/paynix-results.json concurrently — GitHub queues the second
+  # run instead of racing two Drive uploads against each other (last
+  # upload to finish used to win regardless of which run started later,
+  # silently clobbering fresher wallet-log data with a stale scrape).
+  group: paynix-pipeline
   cancel-in-progress: false
 
 jobs:
@@ -42,15 +47,57 @@ jobs:
           printf '%s' "$GDRIVE_OAUTH_CLIENT" > data/gdrive-oauth-client.json
           printf '%s' "$GDRIVE_OAUTH_TOKEN" > data/gdrive-oauth-token.json
 
-      - name: Run full refresh pipeline
+      # Split out of a single "npm run all" chain (was: run: npm run all)
+      # so a Paynix-side failure can't discard a successful PixlerPay
+      # scrape. The old all-or-nothing chain meant an 18-account PixlerPay
+      # run that succeeded got thrown away — upload-to-drive and
+      # telegram-alert never ran — whenever the later download-paynix step
+      # failed (confirmed 2026-08-06: this was happening in ~27% of runs).
+      # continue-on-error lets each Paynix-specific step fail independently
+      # without stopping the job; upload-to-drive/telegram-alert then run
+      # with whatever data did make it to disk (their own existsSync
+      # guards already skip any file that's missing).
+      - name: Download PixlerPay report
+        env:
+          PIXLERPAY_HEADFUL: 'false'
+        run: npm run download-report
+
+      - name: Calculate PixlerPay commission
+        run: npm run calculate
+
+      - name: Download Paynix reseller data
+        env:
+          PAYNIX_HEADFUL: 'false'
+        continue-on-error: true
+        run: npm run download-paynix
+
+      - name: Download Paynix merchant wallet logs
+        env:
+          PAYNIX_HEADFUL: 'false'
+        continue-on-error: true
+        run: npm run download-paynix-wallets
+
+      - name: Download PixlerPay merchant (Paynix) data
+        env:
+          PAYNIX_HEADFUL: 'false'
+        continue-on-error: true
+        run: npm run download-pixlerpay-merchant
+
+      - name: Download Paynix merchant reports
+        continue-on-error: true
+        run: npm run download-paynix-merchant-reports
+
+      - name: Calculate Paynix commission
+        continue-on-error: true
+        run: npm run calculate-paynix
+
+      - name: Upload results to Drive
+        if: ${{ !cancelled() }}
+        run: npm run upload-to-drive
+
+      - name: Send Telegram alert
+        if: ${{ !cancelled() }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          # Real env vars here take priority over dotenv's values from the
-          # .env file (dotenv doesn't override already-set vars), so this
-          # reliably forces headless mode in CI regardless of what the
-          # local-dev .env secret says. No display to watch a headed
-          # browser on in a GitHub-hosted runner anyway.
-          PIXLERPAY_HEADFUL: 'false'
-          PAYNIX_HEADFUL: 'false'
-        run: npm run all
+        run: npm run telegram-alert

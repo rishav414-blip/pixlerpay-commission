@@ -23,6 +23,7 @@ data/paynix-snapshot-previous.json
 data/pixlerpay-merchant-snapshot.json
 data/paynix-merchant-reports/
 data/paynix-merchant-reports-range/
+data/paynix-merchant-reports-range-*/
 data/reseller-ledger-*.json
 data/pixlerpay-telegram-previous.json
 data/_export-cache/

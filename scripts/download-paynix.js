@@ -181,13 +181,29 @@ function computeNewFailedPayouts(previous, current) {
 
 // The reseller portal's first page load is sometimes slow to respond
 // (especially from a distant GitHub Actions runner vs. a local/Indian
-// connection) — retry once with a longer timeout before giving up.
+// connection) — retry with backoff before giving up. A single immediate
+// retry (the old behavior) kept hitting the same slow/blocked window and
+// timing out twice in a row (confirmed 2026-08-06: ~27% of scheduled runs
+// failed this way, both attempts timing out back-to-back at 60s) —
+// spacing retries out gives a transient slow window time to clear.
+const GOTO_RETRY_DELAYS_MS = [10000, 30000];
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function gotoWithRetry(page, url, options) {
-  try {
-    await page.goto(url, { timeout: 60000, ...options });
-  } catch (err) {
-    console.warn(`goto ${url} timed out, retrying once...`);
-    await page.goto(url, { timeout: 60000, ...options });
+  const attempts = GOTO_RETRY_DELAYS_MS.length + 1;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await page.goto(url, { timeout: 90000, ...options });
+      return;
+    } catch (err) {
+      if (i === attempts - 1) throw err;
+      const delay = GOTO_RETRY_DELAYS_MS[i];
+      console.warn(`goto ${url} timed out (attempt ${i + 1}/${attempts}), retrying in ${delay / 1000}s...`);
+      await sleep(delay);
+    }
   }
 }
 
