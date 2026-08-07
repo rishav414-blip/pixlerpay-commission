@@ -2,7 +2,24 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALERT_SECTIONS } = process.env;
+const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALERT_SECTIONS, TELEGRAM_ATMOON_CHAT_ID } = process.env;
+
+// These 9 merchants' wallet top-up alerts route exclusively to the
+// "Atmoon :: Paynix : Pixler" Telegram group instead of the default chat
+// — added 2026-08-07 per explicit request (that group should only ever
+// show these merchants, not the full Paynix roster). Failed-payout
+// alerts are unaffected — this only splits the topups section.
+const ATMOON_MERCHANT_IDS = new Set([
+  'MER_F2155A2A1F99', // SHESTYLE BULK TRADERS PRIVATE LIMITED
+  'MER_0D622C7553A1', // RAAMIRO TRINTROY PRIVATE LIMITED
+  'MER_E75F374D3B5A', // WILDBADGER TECHNOLOGY PRIVATE LIMITED
+  'MER_CC95D8E2A947', // TECHMARKETIQ TECHNOLOGY PRIVATE LIMITED
+  'MER_81FB09B83B4C', // KAHUA SYSTEMS PRIVATE LIMITED
+  'MER_EB9A8C4D9025', // VIKZONE TECHNOLOGY PRIVATE LIMITED
+  'MER_EB1BE5D25983', // VYSHIKAX TECHNOLOGY PRIVATE LIMITED
+  'MER_810B49283330', // VELCYNTRA TECHNOLOGIES PRIVATE LIMITED
+  'MER_19F368135CE0', // ZYPHERON TECHNOLOGY PRIVATE LIMITED
+]);
 const PAYNIX_RESULTS_FILE = path.join('./website', 'paynix-results.json');
 // Own dedicated file (see download-paynix-merchant-wallets.js) — split
 // out 2026-08-07 so wallet-alert.yml and refresh.yml never share a Drive
@@ -25,12 +42,12 @@ const ENABLED_SECTIONS = TELEGRAM_ALERT_SECTIONS
 // "new" entry (a merchant could have several new ones between 15-min checks).
 const MAX_WALLET_ENTRIES_PER_MERCHANT = 2;
 
-async function sendTelegramMessage(text) {
+async function sendTelegramMessage(text, chatId) {
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text, parse_mode: 'HTML' }),
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
   });
   if (!res.ok) {
     const body = await res.text();
@@ -90,7 +107,8 @@ function buildFailedPayoutMessage(d) {
   return lines.join('\n');
 }
 
-function buildTopupMessage(d) {
+// isAtmoon: true -> only the 9 Atmoon-routed merchants; false -> everyone else.
+function buildTopupMessage(d, isAtmoon) {
   const newLoadRequests = d.newLoadRequests || {};
   // Cap per merchant first (so one very active merchant can't crowd out
   // everyone else), then flatten across all merchants and sort the whole
@@ -100,8 +118,9 @@ function buildTopupMessage(d) {
   // embedded per entry (download-paynix-merchant-wallets.js), no
   // cross-file merchant lookup needed.
   const flattened = [];
-  for (const reqs of Object.values(newLoadRequests)) {
+  for (const [merchantId, reqs] of Object.entries(newLoadRequests)) {
     if (!reqs.length) continue;
+    if (ATMOON_MERCHANT_IDS.has(merchantId) !== isAtmoon) continue;
     for (const r of capWalletEntries(reqs)) flattened.push(r);
   }
   if (flattened.length === 0) return '';
@@ -127,24 +146,31 @@ async function run() {
     return;
   }
 
-  const messages = [];
+  const messages = []; // { text, chatId }
 
   if (ENABLED_SECTIONS.has('failed') && fs.existsSync(PAYNIX_RESULTS_FILE)) {
     const d = JSON.parse(fs.readFileSync(PAYNIX_RESULTS_FILE, 'utf-8'));
     const msg = buildFailedPayoutMessage(d);
-    if (msg) messages.push(msg);
+    if (msg) messages.push({ text: msg, chatId: TELEGRAM_CHAT_ID });
   }
 
   if (ENABLED_SECTIONS.has('topups') && fs.existsSync(PAYNIX_WALLETLOG_RESULTS_FILE)) {
     const d = JSON.parse(fs.readFileSync(PAYNIX_WALLETLOG_RESULTS_FILE, 'utf-8'));
-    const msg = buildTopupMessage(d);
-    if (msg) messages.push(msg);
+    const defaultMsg = buildTopupMessage(d, false);
+    if (defaultMsg) messages.push({ text: defaultMsg, chatId: TELEGRAM_CHAT_ID });
+
+    if (TELEGRAM_ATMOON_CHAT_ID) {
+      const atmoonMsg = buildTopupMessage(d, true);
+      if (atmoonMsg) messages.push({ text: atmoonMsg, chatId: TELEGRAM_ATMOON_CHAT_ID });
+    } else {
+      console.log('TELEGRAM_ATMOON_CHAT_ID not set — Atmoon-routed merchants\' top-up alerts are being skipped, not sent to the default chat.');
+    }
   }
 
   if (fs.existsSync(PIXLERPAY_MERCHANT_RESULTS_FILE)) {
     const d = JSON.parse(fs.readFileSync(PIXLERPAY_MERCHANT_RESULTS_FILE, 'utf-8'));
     const msg = buildPixlerMerchantMessage(d);
-    if (msg) messages.push(msg);
+    if (msg) messages.push({ text: msg, chatId: TELEGRAM_CHAT_ID });
   }
 
   // 18-account PixlerPay commission-summary alerts intentionally removed
@@ -156,8 +182,8 @@ async function run() {
     return;
   }
 
-  for (const msg of messages) {
-    await sendTelegramMessage(msg);
+  for (const { text, chatId } of messages) {
+    await sendTelegramMessage(text, chatId);
   }
   console.log(`Telegram alert(s) sent: ${messages.length}.`);
 }

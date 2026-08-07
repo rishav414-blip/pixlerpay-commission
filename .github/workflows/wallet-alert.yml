@@ -87,6 +87,10 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # 9 specific merchants' top-up alerts route here instead of the
+          # default chat above — see ATMOON_MERCHANT_IDS in
+          # telegram-alert.js. Added 2026-08-07.
+          TELEGRAM_ATMOON_CHAT_ID: ${{ secrets.TELEGRAM_ATMOON_CHAT_ID }}
           PAYNIX_HEADFUL: 'false'
           TELEGRAM_ALERT_SECTIONS: 'topups'
         run: |
