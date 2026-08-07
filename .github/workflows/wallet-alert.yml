@@ -64,11 +64,15 @@ jobs:
           printf '%s' "$GDRIVE_OAUTH_CLIENT" > data/gdrive-oauth-client.json
           printf '%s' "$GDRIVE_OAUTH_TOKEN" > data/gdrive-oauth-token.json
 
-      - name: Scrape Paynix + alert on new wallet top-up requests
+      - name: Scrape Paynix + alert on new/changed wallet top-up requests
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           PAYNIX_HEADFUL: 'false'
+          # This is the fast/frequent (every 10 min) tier — only alert on
+          # wallet top-ups here. Failed-payout alerts run on their own
+          # 30-min cadence from refresh.yml instead.
+          TELEGRAM_ALERT_SECTIONS: 'topups'
         run: |
           npm run download-paynix
           npm run download-paynix-wallets

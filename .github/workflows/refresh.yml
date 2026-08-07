@@ -123,4 +123,8 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # This is the 30-min tier — only alert on failed payouts here.
+          # Wallet top-up alerts run on their own 10-min cadence from
+          # wallet-alert.yml instead.
+          TELEGRAM_ALERT_SECTIONS: 'failed'
         run: npm run telegram-alert

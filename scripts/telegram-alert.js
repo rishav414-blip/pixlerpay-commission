@@ -2,9 +2,19 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID } = process.env;
+const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALERT_SECTIONS } = process.env;
 const PAYNIX_RESULTS_FILE = path.join('./website', 'paynix-results.json');
 const PIXLERPAY_MERCHANT_RESULTS_FILE = path.join('./website', 'pixlerpay-merchant-results.json');
+
+// Which Paynix sections this invocation should alert on. wallet-alert.yml
+// (every 10 min) sets this to "topups" only; refresh.yml (every 30 min)
+// sets it to "failed" only — added 2026-08-07 so top-up and failed-payout
+// alerts run on their own independent cadences instead of both firing on
+// whichever schedule happens to call this script. Unset (e.g. manual/local
+// runs) means both sections are included, same as the old behavior.
+const ENABLED_SECTIONS = TELEGRAM_ALERT_SECTIONS
+  ? new Set(TELEGRAM_ALERT_SECTIONS.split(',').map((s) => s.trim()))
+  : new Set(['topups', 'failed']);
 
 // Cap on how many wallet top-up entries are shown per merchant in a single
 // alert message — per explicit request, only the 2 most recent, not every
@@ -26,7 +36,8 @@ async function sendTelegramMessage(text) {
 
 function loadRequestLine(r) {
   const ts = r.createdAt ? ` — ${r.createdAt}` : '';
-  return `  • ${r.requestId || '-'} — ₹${r.amount.toLocaleString('en-IN')} — ${r.method || '-'} — ${r.status || '-'}${ts}`;
+  const status = r.previousStatus ? `${r.previousStatus} → ${r.status || '-'}` : (r.status || '-');
+  return `  • ${r.requestId || '-'} — ₹${r.amount.toLocaleString('en-IN')} — ${r.method || '-'} — ${status}${ts}`;
 }
 
 // Paynix wallet-log timestamps look like "13/07/26, 8:42 pm"
@@ -57,7 +68,7 @@ function capWalletEntries(entries) {
 function buildPaynixMessage(d) {
   const lines = [];
 
-  if (d.newFailedPayouts && d.newFailedPayouts.length > 0) {
+  if (ENABLED_SECTIONS.has('failed') && d.newFailedPayouts && d.newFailedPayouts.length > 0) {
     lines.push(`⚠ <b>${d.newFailedPayouts.length} new failed payout(s)</b>`);
     for (const f of d.newFailedPayouts.slice(0, 10)) {
       const amount = f.amount != null ? `₹${f.amount.toLocaleString('en-IN')}` : '-';
@@ -66,17 +77,19 @@ function buildPaynixMessage(d) {
     if (d.newFailedPayouts.length > 10) lines.push(`  …and ${d.newFailedPayouts.length - 10} more`);
   }
 
-  const merchantById = new Map((d.merchants || []).map((m) => [m.merchantId, m.merchantName]));
-  const newLoadRequests = d.newLoadRequests || {};
-  const merchantsWithNewRequests = Object.entries(newLoadRequests).filter(([, reqs]) => reqs.length > 0);
-  if (merchantsWithNewRequests.length > 0) {
-    if (lines.length) lines.push('');
-    lines.push(`💰 <b>New wallet top-up request(s)</b>`);
-    for (const [merchantId, reqs] of merchantsWithNewRequests) {
-      lines.push(`  <i>${merchantById.get(merchantId) || merchantId}</i>`);
-      const shown = capWalletEntries(reqs);
-      for (const r of shown) lines.push(loadRequestLine(r));
-      if (reqs.length > shown.length) lines.push(`    …and ${reqs.length - shown.length} more`);
+  if (ENABLED_SECTIONS.has('topups')) {
+    const merchantById = new Map((d.merchants || []).map((m) => [m.merchantId, m.merchantName]));
+    const newLoadRequests = d.newLoadRequests || {};
+    const merchantsWithNewRequests = Object.entries(newLoadRequests).filter(([, reqs]) => reqs.length > 0);
+    if (merchantsWithNewRequests.length > 0) {
+      if (lines.length) lines.push('');
+      lines.push(`💰 <b>New / status-changed wallet top-up request(s)</b>`);
+      for (const [merchantId, reqs] of merchantsWithNewRequests) {
+        lines.push(`  <i>${merchantById.get(merchantId) || merchantId}</i>`);
+        const shown = capWalletEntries(reqs);
+        for (const r of shown) lines.push(loadRequestLine(r));
+        if (reqs.length > shown.length) lines.push(`    …and ${reqs.length - shown.length} more`);
+      }
     }
   }
 

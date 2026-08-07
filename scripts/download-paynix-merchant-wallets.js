@@ -57,11 +57,24 @@ async function scrapeWalletLog(page, login) {
 
 // No previous entries for this merchant (first time it's been scraped, e.g.
 // a merchant just added to the reseller network) -> nothing is "new", it's
-// just the starting snapshot. Otherwise, any requestId not seen last run.
-function computeNewLoadRequests(previousEntries, currentEntries) {
+// just the starting snapshot. Otherwise: any requestId not seen last run,
+// OR a previously-seen requestId whose status changed (e.g. Pending ->
+// Approved) — added 2026-08-07 per explicit request so a top-up alert
+// isn't just "one and done" at first sight, status transitions matter too.
+function computeNewOrChangedLoadRequests(previousEntries, currentEntries) {
   if (!previousEntries) return [];
-  const prevIds = new Set(previousEntries.map((e) => e.requestId));
-  return currentEntries.filter((e) => e.requestId && !prevIds.has(e.requestId));
+  const prevById = new Map(previousEntries.map((e) => [e.requestId, e]));
+  const changed = [];
+  for (const e of currentEntries) {
+    if (!e.requestId) continue;
+    const prev = prevById.get(e.requestId);
+    if (!prev) {
+      changed.push(e);
+    } else if (prev.status !== e.status) {
+      changed.push({ ...e, previousStatus: prev.status });
+    }
+  }
+  return changed;
 }
 
 async function run() {
@@ -103,7 +116,7 @@ async function run() {
       console.log(`Scraping wallet log for ${login.merchantName}...`);
       const entries = await scrapeWalletLog(page, login);
       walletLogs[login.merchantId] = entries;
-      newLoadRequests[login.merchantId] = computeNewLoadRequests(previousWalletLogs[login.merchantId], entries);
+      newLoadRequests[login.merchantId] = computeNewOrChangedLoadRequests(previousWalletLogs[login.merchantId], entries);
     } catch (err) {
       console.warn(`Failed to scrape ${login.merchantName}: ${err.message}`);
       walletLogs[login.merchantId] = [];
