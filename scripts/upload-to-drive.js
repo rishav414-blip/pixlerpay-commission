@@ -9,6 +9,7 @@ const {
   GOOGLE_DRIVE_PAYNIX_FILE_ID,
   GOOGLE_DRIVE_PIXLERPAY_MERCHANT_FILE_ID,
   GOOGLE_DRIVE_PAYNIX_COMMISSION_FILE_ID,
+  GOOGLE_DRIVE_PAYNIX_WALLETLOG_FILE_ID,
 } = process.env;
 
 const OAUTH_CLIENT_FILE = './data/gdrive-oauth-client.json';
@@ -17,9 +18,10 @@ const RESULTS_FILE = path.join('./website', 'commission-results.json');
 const PAYNIX_RESULTS_FILE = path.join('./website', 'paynix-results.json');
 const PIXLERPAY_MERCHANT_RESULTS_FILE = path.join('./website', 'pixlerpay-merchant-results.json');
 const PAYNIX_COMMISSION_RESULTS_FILE = path.join('./website', 'paynix-commission-results.json');
+const PAYNIX_WALLETLOG_RESULTS_FILE = path.join('./website', 'paynix-wallet-log-results.json');
 
-if (!fs.existsSync(RESULTS_FILE) && !fs.existsSync(PAYNIX_RESULTS_FILE) && !fs.existsSync(PIXLERPAY_MERCHANT_RESULTS_FILE) && !fs.existsSync(PAYNIX_COMMISSION_RESULTS_FILE)) {
-  console.error(`Missing all of ${RESULTS_FILE}, ${PAYNIX_RESULTS_FILE}, ${PIXLERPAY_MERCHANT_RESULTS_FILE}, ${PAYNIX_COMMISSION_RESULTS_FILE}. Run the relevant download/calculate script(s) first.`);
+if (!fs.existsSync(RESULTS_FILE) && !fs.existsSync(PAYNIX_RESULTS_FILE) && !fs.existsSync(PIXLERPAY_MERCHANT_RESULTS_FILE) && !fs.existsSync(PAYNIX_COMMISSION_RESULTS_FILE) && !fs.existsSync(PAYNIX_WALLETLOG_RESULTS_FILE)) {
+  console.error(`Missing all of ${RESULTS_FILE}, ${PAYNIX_RESULTS_FILE}, ${PIXLERPAY_MERCHANT_RESULTS_FILE}, ${PAYNIX_COMMISSION_RESULTS_FILE}, ${PAYNIX_WALLETLOG_RESULTS_FILE}. Run the relevant download/calculate script(s) first.`);
   process.exit(1);
 }
 
@@ -108,6 +110,10 @@ async function run() {
   if (fs.existsSync(PAYNIX_COMMISSION_RESULTS_FILE)) {
     const paynixCommissionFileId = await uploadFile(PAYNIX_COMMISSION_RESULTS_FILE, 'paynix-commission-results.json', 'application/json', GOOGLE_DRIVE_PAYNIX_COMMISSION_FILE_ID);
     console.log('paynix-commission-results.json Drive file ID:', paynixCommissionFileId);
+  }
+  if (fs.existsSync(PAYNIX_WALLETLOG_RESULTS_FILE)) {
+    const walletLogFileId = await uploadFile(PAYNIX_WALLETLOG_RESULTS_FILE, 'paynix-wallet-log-results.json', 'application/json', GOOGLE_DRIVE_PAYNIX_WALLETLOG_FILE_ID);
+    console.log('paynix-wallet-log-results.json Drive file ID:', walletLogFileId);
   }
   console.log('\nDone.');
 }

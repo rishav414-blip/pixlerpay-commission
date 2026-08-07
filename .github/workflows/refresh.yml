@@ -97,12 +97,12 @@ jobs:
         continue-on-error: true
         run: npm run download-paynix
 
-      - name: Download Paynix merchant wallet logs
-        env:
-          PAYNIX_HEADFUL: 'false'
-        continue-on-error: true
-        run: npm run download-paynix-wallets
-
+      # Wallet-log/top-up scraping is now wallet-alert.yml's exclusive
+      # responsibility (was: also run here). Both workflows used to write
+      # walletLogs into the same shared paynix-results.json — that's fine
+      # for walletLogs specifically, but running download-paynix-wallets
+      # here too added no value (wallet-alert.yml already covers it on a
+      # much faster cadence) while adding scrape time to every refresh run.
       - name: Download PixlerPay merchant (Paynix) data
         env:
           PAYNIX_HEADFUL: 'false'

@@ -4,6 +4,10 @@ import path from 'node:path';
 
 const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALERT_SECTIONS } = process.env;
 const PAYNIX_RESULTS_FILE = path.join('./website', 'paynix-results.json');
+// Own dedicated file (see download-paynix-merchant-wallets.js) — split
+// out 2026-08-07 so wallet-alert.yml and refresh.yml never share a Drive
+// file to race on.
+const PAYNIX_WALLETLOG_RESULTS_FILE = path.join('./website', 'paynix-wallet-log-results.json');
 const PIXLERPAY_MERCHANT_RESULTS_FILE = path.join('./website', 'pixlerpay-merchant-results.json');
 
 // Which Paynix sections this invocation should alert on. wallet-alert.yml
@@ -66,48 +70,44 @@ function capWalletEntries(entries) {
     .slice(0, MAX_WALLET_ENTRIES_PER_MERCHANT);
 }
 
-function buildPaynixMessage(d) {
+function buildFailedPayoutMessage(d) {
+  if (!d.newFailedPayouts || d.newFailedPayouts.length === 0) return '';
   const lines = [];
-
-  if (ENABLED_SECTIONS.has('failed') && d.newFailedPayouts && d.newFailedPayouts.length > 0) {
-    // Sort newest-first (same DD/MM/YY timestamp format as wallet-log
-    // entries — plain scrape order isn't reliably newest-first) and cap
-    // at 10, so a burst of failures doesn't produce an unreadable wall
-    // of text in one Telegram message.
-    const sorted = [...d.newFailedPayouts].sort((a, b) => parseWalletTimestamp(b.createdAt) - parseWalletTimestamp(a.createdAt));
-    const shown = sorted.slice(0, 10);
-    lines.push(`⚠ <b>${d.newFailedPayouts.length} new failed payout(s)</b>`);
-    for (const f of shown) {
-      const amount = f.amount != null ? `₹${f.amount.toLocaleString('en-IN')}` : '-';
-      const merchant = f.merchantName ? f.merchantName.split(' ')[0] : '-';
-      const ts = f.createdAt ? ` — ${f.createdAt}` : '';
-      lines.push(`  • ${f.transactionId || '-'} — ${merchant} — ${amount} — ${f.reason || 'no reason captured'}${ts}`);
-    }
-    if (sorted.length > shown.length) lines.push(`  …and ${sorted.length - shown.length} more`);
+  // Sort newest-first (same DD/MM/YY timestamp format as wallet-log
+  // entries — plain scrape order isn't reliably newest-first) and cap
+  // at 10, so a burst of failures doesn't produce an unreadable wall
+  // of text in one Telegram message.
+  const sorted = [...d.newFailedPayouts].sort((a, b) => parseWalletTimestamp(b.createdAt) - parseWalletTimestamp(a.createdAt));
+  const shown = sorted.slice(0, 10);
+  lines.push(`⚠ <b>${d.newFailedPayouts.length} new failed payout(s)</b>`);
+  for (const f of shown) {
+    const amount = f.amount != null ? `₹${f.amount.toLocaleString('en-IN')}` : '-';
+    const merchant = f.merchantName ? f.merchantName.split(' ')[0] : '-';
+    const ts = f.createdAt ? ` — ${f.createdAt}` : '';
+    lines.push(`  • ${f.transactionId || '-'} — ${merchant} — ${amount} — ${f.reason || 'no reason captured'}${ts}`);
   }
+  if (sorted.length > shown.length) lines.push(`  …and ${sorted.length - shown.length} more`);
+  return lines.join('\n');
+}
 
-  if (ENABLED_SECTIONS.has('topups')) {
-    const merchantById = new Map((d.merchants || []).map((m) => [m.merchantId, m.merchantName]));
-    const newLoadRequests = d.newLoadRequests || {};
-    // Cap per merchant first (so one very active merchant can't crowd out
-    // everyone else), then flatten across all merchants and sort the
-    // whole list newest-first by actual timestamp — was grouped by
-    // merchant with only within-group ordering, so the message read
-    // oldest-merchant-first rather than most-recent-event-first overall.
-    const flattened = [];
-    for (const [merchantId, reqs] of Object.entries(newLoadRequests)) {
-      if (!reqs.length) continue;
-      const merchantName = merchantById.get(merchantId) || merchantId;
-      for (const r of capWalletEntries(reqs)) flattened.push({ ...r, merchantName });
-    }
-    if (flattened.length > 0) {
-      flattened.sort((a, b) => parseWalletTimestamp(b.createdAt) - parseWalletTimestamp(a.createdAt));
-      if (lines.length) lines.push('');
-      lines.push(`💰 <b>New / status-changed wallet top-up request(s)</b>`);
-      for (const r of flattened) lines.push(loadRequestLine(r));
-    }
+function buildTopupMessage(d) {
+  const newLoadRequests = d.newLoadRequests || {};
+  // Cap per merchant first (so one very active merchant can't crowd out
+  // everyone else), then flatten across all merchants and sort the whole
+  // list newest-first by actual timestamp — was grouped by merchant with
+  // only within-group ordering, so the message read oldest-merchant-first
+  // rather than most-recent-event-first overall. merchantName is already
+  // embedded per entry (download-paynix-merchant-wallets.js), no
+  // cross-file merchant lookup needed.
+  const flattened = [];
+  for (const reqs of Object.values(newLoadRequests)) {
+    if (!reqs.length) continue;
+    for (const r of capWalletEntries(reqs)) flattened.push(r);
   }
-
+  if (flattened.length === 0) return '';
+  flattened.sort((a, b) => parseWalletTimestamp(b.createdAt) - parseWalletTimestamp(a.createdAt));
+  const lines = [`💰 <b>New / status-changed wallet top-up request(s)</b>`];
+  for (const r of flattened) lines.push(loadRequestLine(r));
   return lines.join('\n');
 }
 
@@ -129,9 +129,15 @@ async function run() {
 
   const messages = [];
 
-  if (fs.existsSync(PAYNIX_RESULTS_FILE)) {
+  if (ENABLED_SECTIONS.has('failed') && fs.existsSync(PAYNIX_RESULTS_FILE)) {
     const d = JSON.parse(fs.readFileSync(PAYNIX_RESULTS_FILE, 'utf-8'));
-    const msg = buildPaynixMessage(d);
+    const msg = buildFailedPayoutMessage(d);
+    if (msg) messages.push(msg);
+  }
+
+  if (ENABLED_SECTIONS.has('topups') && fs.existsSync(PAYNIX_WALLETLOG_RESULTS_FILE)) {
+    const d = JSON.parse(fs.readFileSync(PAYNIX_WALLETLOG_RESULTS_FILE, 'utf-8'));
+    const msg = buildTopupMessage(d);
     if (msg) messages.push(msg);
   }
 

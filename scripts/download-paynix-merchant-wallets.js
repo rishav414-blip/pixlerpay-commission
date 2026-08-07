@@ -6,11 +6,23 @@ import { fetchPreviousFromDrive } from './lib/drive-fetch.js';
 
 const MERCHANT_LOGIN_URL = 'https://merchant.paynix.co.in/auth/login';
 const LOGINS_FILE = path.join('./data', 'paynix-merchant-logins.json');
-const OUTPUT_JSON = path.join('./website', 'paynix-results.json');
-const SNAPSHOT_FILE = path.join('./data', 'paynix-snapshot.json');
+// Own dedicated file, separate from website/paynix-results.json (the
+// reseller/failed-payout scrape owned exclusively by download-paynix.js).
+// Was previously merged into that shared file — but since wallet-alert.yml
+// and refresh.yml can now run concurrently (separate concurrency groups),
+// a shared file meant a read-modify-write race: whichever workflow's
+// Drive upload landed second could clobber the other's fresher data with
+// a stale copy it had fetched before the other's write. Confirmed
+// 2026-08-07: this caused refresh.yml's failed-payout diffing to keep
+// losing newly-detected failures to wallet-alert.yml's stale re-uploads,
+// so the same failed transaction got alerted 3 times in a row. Splitting
+// into two files each workflow exclusively owns eliminates the race
+// entirely — there's no shared file left to clobber.
+const OUTPUT_JSON = path.join('./website', 'paynix-wallet-log-results.json');
+const SNAPSHOT_FILE = path.join('./data', 'paynix-wallet-log-snapshot.json');
 const TOP_N = 5;
 
-const { PAYNIX_HEADFUL, GOOGLE_DRIVE_PAYNIX_FILE_ID, GOOGLE_DRIVE_API_KEY } = process.env;
+const { PAYNIX_HEADFUL, GOOGLE_DRIVE_PAYNIX_WALLETLOG_FILE_ID, GOOGLE_DRIVE_API_KEY } = process.env;
 const headless = PAYNIX_HEADFUL !== 'true';
 
 function parseINR(s) {
@@ -84,28 +96,8 @@ async function run() {
   }
   const logins = JSON.parse(fs.readFileSync(LOGINS_FILE, 'utf-8'));
 
-  // download-paynix.js's baseline for diffing (walletLogs) has to come
-  // from the last *published* snapshot regardless, so fetch it from Drive
-  // first either way.
-  const previousResults = await fetchPreviousFromDrive(GOOGLE_DRIVE_PAYNIX_FILE_ID, GOOGLE_DRIVE_API_KEY);
+  const previousResults = await fetchPreviousFromDrive(GOOGLE_DRIVE_PAYNIX_WALLETLOG_FILE_ID, GOOGLE_DRIVE_API_KEY);
   const previousWalletLogs = previousResults?.walletLogs || {};
-
-  // No longer requires download-paynix.js to have run first in the same
-  // job (was: hard error if OUTPUT_JSON missing). That coupling meant
-  // wallet-alert.yml had to re-run the full reseller scrape (merchants +
-  // failed payouts) on every wallet-log check, and — since both workflows
-  // then uploaded to the same Drive file — whichever workflow scraped
-  // first "consumed" a newly-failed payout by publishing it, leaving
-  // nothing "new" for the other workflow's failed-payout alert to find
-  // (confirmed 2026-08-07: refresh.yml's failed-payout section was
-  // reporting "0 new" because wallet-alert.yml, now running every 5 min,
-  // was winning that race almost every time). Falling back to Drive's
-  // last full snapshot for merchants/failedPayouts/summary means this
-  // script only ever touches walletLogs — refresh.yml is the sole owner
-  // of failed-payout detection and its Drive uploads, on its own cadence.
-  const results = fs.existsSync(OUTPUT_JSON)
-    ? JSON.parse(fs.readFileSync(OUTPUT_JSON, 'utf-8'))
-    : (previousResults || {});
 
   const walletLogs = {};
   const newLoadRequests = {};
@@ -126,7 +118,12 @@ async function run() {
       console.log(`Scraping wallet log for ${login.merchantName}...`);
       const entries = await scrapeWalletLog(page, login);
       walletLogs[login.merchantId] = entries;
-      newLoadRequests[login.merchantId] = computeNewOrChangedLoadRequests(previousWalletLogs[login.merchantId], entries);
+      const changed = computeNewOrChangedLoadRequests(previousWalletLogs[login.merchantId], entries);
+      // Embed merchantName directly on each alert-worthy entry so
+      // telegram-alert.js doesn't need to cross-reference the separate
+      // reseller-scrape file (which it no longer has access to — that
+      // file is now exclusively refresh.yml's).
+      newLoadRequests[login.merchantId] = changed.map((e) => ({ ...e, merchantName: login.merchantName }));
     } catch (err) {
       console.warn(`Failed to scrape ${login.merchantName}: ${err.message}`);
       // Preserve the last-known-good entries instead of wiping this
@@ -143,19 +140,12 @@ async function run() {
   }
   await browser.close();
 
-  results.walletLogs = walletLogs;
-  results.newLoadRequests = newLoadRequests;
-  results.walletLogsGeneratedAt = new Date().toISOString();
+  const results = { walletLogs, newLoadRequests, walletLogsGeneratedAt: new Date().toISOString() };
 
   fs.mkdirSync(path.dirname(OUTPUT_JSON), { recursive: true });
   fs.writeFileSync(OUTPUT_JSON, JSON.stringify(results, null, 2));
-  if (fs.existsSync(SNAPSHOT_FILE)) {
-    const snapshot = JSON.parse(fs.readFileSync(SNAPSHOT_FILE, 'utf-8'));
-    snapshot.walletLogs = walletLogs;
-    snapshot.newLoadRequests = newLoadRequests;
-    snapshot.walletLogsGeneratedAt = results.walletLogsGeneratedAt;
-    fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(snapshot, null, 2));
-  }
+  fs.mkdirSync(path.dirname(SNAPSHOT_FILE), { recursive: true });
+  fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(results, null, 2));
 
   const totalNew = Object.values(newLoadRequests).reduce((sum, arr) => sum + arr.length, 0);
   console.log(`\nWallet logs captured for ${Object.keys(walletLogs).length} merchant(s), top ${TOP_N} entries each.`);

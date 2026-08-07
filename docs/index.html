@@ -878,6 +878,12 @@
   // ---- Paynix tab ------------------------------------------------------
   const PAYNIX_FILE_ID = '1QNBL16ZKs0IJ2TptujnazLSk29SGxVEy';
   const paynixUrl = `https://www.googleapis.com/drive/v3/files/${PAYNIX_FILE_ID}?alt=media&key=${DRIVE_API_KEY}`;
+  // walletLogs/newLoadRequests moved to their own dedicated Drive file
+  // 2026-08-07 (was: merged into the file above) — see
+  // download-paynix-merchant-wallets.js for why. Placeholder until the
+  // workflow's first run creates it and prints the real file ID.
+  const PAYNIX_WALLETLOG_FILE_ID = 'REPLACE_WITH_WALLETLOG_FILE_ID';
+  const paynixWalletLogUrl = `https://www.googleapis.com/drive/v3/files/${PAYNIX_WALLETLOG_FILE_ID}?alt=media&key=${DRIVE_API_KEY}`;
   let PAYNIX_DATA = null;
   let paynixLoaded = false;
 
@@ -1025,6 +1031,21 @@
       const res = await fetch(paynixUrl, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Drive fetch failed: ${res.status} ${res.statusText}`);
       PAYNIX_DATA = await res.json();
+      // Merge in the separate wallet-log file (see PAYNIX_WALLETLOG_FILE_ID
+      // above) — best-effort: if it 404s (e.g. placeholder ID not yet
+      // replaced) the rest of the Paynix tab still renders, just without
+      // wallet-log data.
+      try {
+        const walletRes = await fetch(paynixWalletLogUrl, { cache: 'no-store' });
+        if (walletRes.ok) {
+          const walletData = await walletRes.json();
+          PAYNIX_DATA.walletLogs = walletData.walletLogs || {};
+          PAYNIX_DATA.newLoadRequests = walletData.newLoadRequests || {};
+          PAYNIX_DATA.walletLogsGeneratedAt = walletData.walletLogsGeneratedAt || null;
+        }
+      } catch (walletErr) {
+        console.warn('Wallet-log fetch failed:', walletErr);
+      }
       await fetchPaynixCommissionData();
       setupPanel2.hidden = true;
       app2.hidden = false;
