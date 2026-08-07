@@ -67,8 +67,10 @@ jobs:
           PAYNIX_MERCHANT_LOGINS: ${{ secrets.PAYNIX_MERCHANT_LOGINS }}
           GDRIVE_OAUTH_CLIENT: ${{ secrets.GDRIVE_OAUTH_CLIENT }}
           GDRIVE_OAUTH_TOKEN: ${{ secrets.GDRIVE_OAUTH_TOKEN }}
+          GOOGLE_DRIVE_PAYNIX_WALLETLOG_FILE_ID: ${{ secrets.GOOGLE_DRIVE_PAYNIX_WALLETLOG_FILE_ID }}
         run: |
           printf '%s' "$ENV_FILE" > .env
+          printf '\nGOOGLE_DRIVE_PAYNIX_WALLETLOG_FILE_ID=%s\n' "$GOOGLE_DRIVE_PAYNIX_WALLETLOG_FILE_ID" >> .env
           printf '%s' "$PAYNIX_MERCHANT_LOGINS" > data/paynix-merchant-logins.json
           printf '%s' "$GDRIVE_OAUTH_CLIENT" > data/gdrive-oauth-client.json
           printf '%s' "$GDRIVE_OAUTH_TOKEN" > data/gdrive-oauth-token.json
