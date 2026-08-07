@@ -101,11 +101,19 @@ async function scrapeFailedPayouts(page) {
     const reason = reasonMatch ? reasonMatch[reasonMatch.length - 1].trim() : null;
     if (reason && RATE_LIMIT_REASON_RE.test(reason)) continue; // not a real failure
 
+    // Same row-text shape as the merchants table ("RA\nRASHEEYA TECHNOLOGY
+    // PRIVATE LIMITED\nMER_1F18C5EDCA3B") — pull the merchant name out for
+    // the Telegram alert instead of just a bare transaction ID.
+    const merchantId = merchantLines.find((l) => /^MER_/.test(l)) || null;
+    const merchantName = merchantLines.find((l) => l !== merchantId && l.length > 2 && !/^[A-Z]{2}$/.test(l)) || null;
+
     failed.push({
       transactionId: idMatch ? idMatch[0] : null,
       amount: amountMatch ? parseINR(amountMatch[0]) : null,
       reason,
       createdAt: timeMatch ? timeMatch[1] : null,
+      merchantId,
+      merchantName,
       raw: merchantLines.slice(0, 6).join(' | '),
     });
   }

@@ -69,12 +69,20 @@ function buildPaynixMessage(d) {
   const lines = [];
 
   if (ENABLED_SECTIONS.has('failed') && d.newFailedPayouts && d.newFailedPayouts.length > 0) {
+    // Sort newest-first (same DD/MM/YY timestamp format as wallet-log
+    // entries — plain scrape order isn't reliably newest-first) and cap
+    // at 10, so a burst of failures doesn't produce an unreadable wall
+    // of text in one Telegram message.
+    const sorted = [...d.newFailedPayouts].sort((a, b) => parseWalletTimestamp(b.createdAt) - parseWalletTimestamp(a.createdAt));
+    const shown = sorted.slice(0, 10);
     lines.push(`⚠ <b>${d.newFailedPayouts.length} new failed payout(s)</b>`);
-    for (const f of d.newFailedPayouts.slice(0, 10)) {
+    for (const f of shown) {
       const amount = f.amount != null ? `₹${f.amount.toLocaleString('en-IN')}` : '-';
-      lines.push(`  • ${f.transactionId || '-'} — ${amount} — ${f.reason || 'no reason captured'}`);
+      const merchant = f.merchantName ? f.merchantName.split(' ')[0] : '-';
+      const ts = f.createdAt ? ` — ${f.createdAt}` : '';
+      lines.push(`  • ${f.transactionId || '-'} — ${merchant} — ${amount} — ${f.reason || 'no reason captured'}${ts}`);
     }
-    if (d.newFailedPayouts.length > 10) lines.push(`  …and ${d.newFailedPayouts.length - 10} more`);
+    if (sorted.length > shown.length) lines.push(`  …and ${sorted.length - shown.length} more`);
   }
 
   if (ENABLED_SECTIONS.has('topups')) {
