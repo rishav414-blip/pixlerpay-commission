@@ -15,11 +15,17 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  # Shared with refresh.yml — see the comment there. Both workflows write
-  # and upload website/paynix-results.json, so they must never run
-  # concurrently. cancel-in-progress stays false: cancelling a run
-  # mid-upload could leave Drive with a half-written file.
-  group: paynix-pipeline
+  # Own group, separate from refresh.yml (was: shared "paynix-pipeline")
+  # — since download-paynix.js/failed-payout data is no longer touched
+  # here, the two workflows no longer need to serialize against each
+  # other. Splitting them stops wallet-alert's frequent (5-min) dispatches
+  # from queuing behind refresh.yml's longer runs and getting cancelled
+  # (confirmed happening 2026-08-07). Residual risk: a wallet-alert upload
+  # finishing after a refresh.yml upload can briefly overwrite the
+  # dashboard's merchants/failed-payout *display* data with a slightly
+  # older snapshot — cosmetic only, doesn't affect alert correctness.
+  # Still self-serialized against overlapping wallet-alert runs.
+  group: wallet-alert-pipeline
   cancel-in-progress: false
 
 jobs:

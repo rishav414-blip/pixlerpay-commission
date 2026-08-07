@@ -8,12 +8,15 @@ on:
   workflow_dispatch: {} # manual "Run workflow" button in the Actions tab
 
 concurrency:
-  # Shared with wallet-alert.yml so the two workflows never write/upload
-  # website/paynix-results.json concurrently — GitHub queues the second
-  # run instead of racing two Drive uploads against each other (last
-  # upload to finish used to win regardless of which run started later,
-  # silently clobbering fresher wallet-log data with a stale scrape).
-  group: paynix-pipeline
+  # Own group, separate from wallet-alert.yml (was: shared
+  # "paynix-pipeline"). That sharing was needed while both workflows
+  # scraped and uploaded failed-payout data — now wallet-alert.yml never
+  # touches it (see its own comment), so the two no longer need to
+  # serialize against each other; doing so was queuing out wallet-alert's
+  # frequent (5-min) dispatches behind this workflow's longer runs and
+  # getting them cancelled (confirmed 2026-08-07). Still self-serialized
+  # against overlapping refresh.yml runs.
+  group: refresh-pipeline
   cancel-in-progress: false
 
 jobs:
