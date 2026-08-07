@@ -83,19 +83,29 @@ async function run() {
     return;
   }
   const logins = JSON.parse(fs.readFileSync(LOGINS_FILE, 'utf-8'));
-  if (!fs.existsSync(OUTPUT_JSON)) {
-    console.error(`${OUTPUT_JSON} not found — run download-paynix first.`);
-    process.exit(1);
-  }
 
-  const results = JSON.parse(fs.readFileSync(OUTPUT_JSON, 'utf-8'));
-
-  // download-paynix.js just wrote a fresh results object this run with no
-  // walletLogs field yet (that's this script's job) — so the "previous"
-  // baseline for diffing has to come from the last *published* snapshot,
-  // not the file we're about to overwrite.
+  // download-paynix.js's baseline for diffing (walletLogs) has to come
+  // from the last *published* snapshot regardless, so fetch it from Drive
+  // first either way.
   const previousResults = await fetchPreviousFromDrive(GOOGLE_DRIVE_PAYNIX_FILE_ID, GOOGLE_DRIVE_API_KEY);
   const previousWalletLogs = previousResults?.walletLogs || {};
+
+  // No longer requires download-paynix.js to have run first in the same
+  // job (was: hard error if OUTPUT_JSON missing). That coupling meant
+  // wallet-alert.yml had to re-run the full reseller scrape (merchants +
+  // failed payouts) on every wallet-log check, and — since both workflows
+  // then uploaded to the same Drive file — whichever workflow scraped
+  // first "consumed" a newly-failed payout by publishing it, leaving
+  // nothing "new" for the other workflow's failed-payout alert to find
+  // (confirmed 2026-08-07: refresh.yml's failed-payout section was
+  // reporting "0 new" because wallet-alert.yml, now running every 5 min,
+  // was winning that race almost every time). Falling back to Drive's
+  // last full snapshot for merchants/failedPayouts/summary means this
+  // script only ever touches walletLogs — refresh.yml is the sole owner
+  // of failed-payout detection and its Drive uploads, on its own cadence.
+  const results = fs.existsSync(OUTPUT_JSON)
+    ? JSON.parse(fs.readFileSync(OUTPUT_JSON, 'utf-8'))
+    : (previousResults || {});
 
   const walletLogs = {};
   const newLoadRequests = {};
@@ -131,6 +141,7 @@ async function run() {
   results.newLoadRequests = newLoadRequests;
   results.walletLogsGeneratedAt = new Date().toISOString();
 
+  fs.mkdirSync(path.dirname(OUTPUT_JSON), { recursive: true });
   fs.writeFileSync(OUTPUT_JSON, JSON.stringify(results, null, 2));
   if (fs.existsSync(SNAPSHOT_FILE)) {
     const snapshot = JSON.parse(fs.readFileSync(SNAPSHOT_FILE, 'utf-8'));

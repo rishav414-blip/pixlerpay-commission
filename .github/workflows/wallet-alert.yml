@@ -1,11 +1,14 @@
 name: Paynix wallet top-up alert
 
-# Fast, frequent check limited to the Paynix side (reseller dashboard +
-# per-merchant wallet "Load Requests" logs) so new top-up requests get
-# alerted on quickly, without re-running the slow full pipeline (18
-# PixlerPay account logins + a 700+ row payout export) every 15 minutes.
-# The full data refresh still happens separately every 30 min (refresh.yml).
-
+# Fast, frequent check limited to per-merchant wallet "Load Requests"
+# (top-up) logs — no reseller-dashboard/failed-payout scrape here, see
+# the "no longer runs download-paynix" comment below for why. The real
+# schedule is an external cron (cron-job.org) hitting workflow_dispatch
+# every 5 min, since GitHub's native `schedule:` trigger was found
+# 2026-08-07 to silently run at ~2.5-3hr intervals regardless of the cron
+# expression below — this native schedule is kept only as a passive
+# backstop. Failed-payout checks run on their own cadence (refresh.yml,
+# externally triggered every 15 min).
 on:
   schedule:
     - cron: '*/10 * * * *'
@@ -64,17 +67,21 @@ jobs:
           printf '%s' "$GDRIVE_OAUTH_CLIENT" > data/gdrive-oauth-client.json
           printf '%s' "$GDRIVE_OAUTH_TOKEN" > data/gdrive-oauth-token.json
 
-      - name: Scrape Paynix + alert on new/changed wallet top-up requests
+      # No longer runs download-paynix (the reseller/failed-payout scrape)
+      # — download-paynix-wallets now sources its merchants/failedPayouts
+      # baseline straight from Drive instead of needing a same-run scrape
+      # first. That coupling was the cause of a real bug (2026-08-07):
+      # every wallet-alert run was re-scraping and re-uploading failed
+      # payouts too, which "consumed" newly-failed payouts before
+      # refresh.yml's failed-only alert ever saw them as new. Now this
+      # workflow only ever touches wallet top-up data.
+      - name: Scrape Paynix wallet top-ups + alert on new/changed requests
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           PAYNIX_HEADFUL: 'false'
-          # This is the fast/frequent (every 10 min) tier — only alert on
-          # wallet top-ups here. Failed-payout alerts run on their own
-          # 30-min cadence from refresh.yml instead.
           TELEGRAM_ALERT_SECTIONS: 'topups'
         run: |
-          npm run download-paynix
           npm run download-paynix-wallets
           npm run upload-to-drive
           npm run telegram-alert
