@@ -37,7 +37,8 @@ async function sendTelegramMessage(text) {
 function loadRequestLine(r) {
   const ts = r.createdAt ? ` — ${r.createdAt}` : '';
   const status = r.previousStatus ? `${r.previousStatus} → ${r.status || '-'}` : (r.status || '-');
-  return `  • ${r.requestId || '-'} — ₹${r.amount.toLocaleString('en-IN')} — ${r.method || '-'} — ${status}${ts}`;
+  const merchant = r.merchantName ? `<i>${r.merchantName}</i> — ` : '';
+  return `  • ${merchant}${r.requestId || '-'} — ₹${r.amount.toLocaleString('en-IN')} — ${r.method || '-'} — ${status}${ts}`;
 }
 
 // Paynix wallet-log timestamps look like "13/07/26, 8:42 pm"
@@ -88,16 +89,22 @@ function buildPaynixMessage(d) {
   if (ENABLED_SECTIONS.has('topups')) {
     const merchantById = new Map((d.merchants || []).map((m) => [m.merchantId, m.merchantName]));
     const newLoadRequests = d.newLoadRequests || {};
-    const merchantsWithNewRequests = Object.entries(newLoadRequests).filter(([, reqs]) => reqs.length > 0);
-    if (merchantsWithNewRequests.length > 0) {
+    // Cap per merchant first (so one very active merchant can't crowd out
+    // everyone else), then flatten across all merchants and sort the
+    // whole list newest-first by actual timestamp — was grouped by
+    // merchant with only within-group ordering, so the message read
+    // oldest-merchant-first rather than most-recent-event-first overall.
+    const flattened = [];
+    for (const [merchantId, reqs] of Object.entries(newLoadRequests)) {
+      if (!reqs.length) continue;
+      const merchantName = merchantById.get(merchantId) || merchantId;
+      for (const r of capWalletEntries(reqs)) flattened.push({ ...r, merchantName });
+    }
+    if (flattened.length > 0) {
+      flattened.sort((a, b) => parseWalletTimestamp(b.createdAt) - parseWalletTimestamp(a.createdAt));
       if (lines.length) lines.push('');
       lines.push(`💰 <b>New / status-changed wallet top-up request(s)</b>`);
-      for (const [merchantId, reqs] of merchantsWithNewRequests) {
-        lines.push(`  <i>${merchantById.get(merchantId) || merchantId}</i>`);
-        const shown = capWalletEntries(reqs);
-        for (const r of shown) lines.push(loadRequestLine(r));
-        if (reqs.length > shown.length) lines.push(`    …and ${reqs.length - shown.length} more`);
-      }
+      for (const r of flattened) lines.push(loadRequestLine(r));
     }
   }
 

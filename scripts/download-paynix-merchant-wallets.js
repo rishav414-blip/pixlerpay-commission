@@ -129,7 +129,13 @@ async function run() {
       newLoadRequests[login.merchantId] = computeNewOrChangedLoadRequests(previousWalletLogs[login.merchantId], entries);
     } catch (err) {
       console.warn(`Failed to scrape ${login.merchantName}: ${err.message}`);
-      walletLogs[login.merchantId] = [];
+      // Preserve the last-known-good entries instead of wiping this
+      // merchant's baseline to []. An empty array was getting uploaded to
+      // Drive as the new "previous" state on every transient scrape
+      // failure, so the next successful scrape compared against nothing
+      // and re-alerted every entry as brand new — including ones already
+      // alerted in an earlier cron run (confirmed 2026-08-07).
+      walletLogs[login.merchantId] = previousWalletLogs[login.merchantId] || [];
       newLoadRequests[login.merchantId] = [];
     } finally {
       await context.close();
