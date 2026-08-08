@@ -169,7 +169,6 @@
           <tr>
             <th>Client</th>
             <th class="num">Volume (₹)</th>
-            <th class="num">Commission (₹)</th>
             <th class="num">Ans Commission (₹)</th>
             <th class="num">Wallet Balance (₹)</th>
             <th class="num">Wallet Change (₹)</th>
@@ -293,14 +292,11 @@
     }
   }
 
-  // Same margin/Ans rules as calculate-paynix-commission.js — kept in sync
-  // manually. No AK calculation here at all — this page never shows it.
-  function calcMarginCommission(amount, rate) {
-    if (amount <= 1000 && rate.onboardedFlatBelow1000 != null && rate.resellerFlatBelow1000 != null) {
-      return rate.onboardedFlatBelow1000 - rate.resellerFlatBelow1000;
-    }
-    return (amount * (rate.onboardedPct - rate.resellerPct)) / 100;
-  }
+  // Same Ans rule as calculate-paynix-commission.js — kept in sync
+  // manually. No margin/AK calculation here at all — this page never
+  // shows them, and the source data no longer carries the fields needed
+  // to compute margin commission (reseller/onboarded rates stripped
+  // server-side, filter-paynix-atmoon.js).
   function calcAnsCommission(amount, rate) {
     if (rate.ansPct == null) return 0;
     if (amount <= 1000 && rate.ansFlatBelow1000 != null) return rate.ansFlatBelow1000;
@@ -311,43 +307,39 @@
     if (!PAYNIX_COMMISSION_DATA) return null;
     const rate = PAYNIX_COMMISSION_DATA.clients.find((c) => c.merchantId === merchantId);
     if (!rate || !rate.hasData) return null;
-    let totalAmount = 0, totalCommission = 0, totalAnsCommission = 0, successfulTxns = 0;
+    let totalAmount = 0, totalAnsCommission = 0, successfulTxns = 0;
     for (const [va, isoDate, amount] of PAYNIX_COMMISSION_DATA.transactions) {
       if (va !== merchantId) continue;
       if (paynixRangeFrom && (!isoDate || isoDate < paynixRangeFrom)) continue;
       if (paynixRangeTo && (!isoDate || isoDate > paynixRangeTo)) continue;
       totalAmount += amount;
-      totalCommission += calcMarginCommission(amount, rate);
       totalAnsCommission += calcAnsCommission(amount, rate);
       successfulTxns += 1;
     }
     return {
       totalAmount: Math.round(totalAmount * 100) / 100,
-      totalCommission: Math.round(totalCommission * 100) / 100,
       totalAnsCommission: Math.round(totalAnsCommission * 100) / 100,
       successfulTxns,
     };
   }
 
   function computePaynixCommissionForRange() {
-    if (!PAYNIX_COMMISSION_DATA) return { totalCommission: 0, totalAnsCommission: 0, totalVolume: 0, clients: [] };
+    if (!PAYNIX_COMMISSION_DATA) return { totalAnsCommission: 0, totalVolume: 0, clients: [] };
     const rateByMerchant = new Map(PAYNIX_COMMISSION_DATA.clients.filter((c) => c.merchantId).map((c) => [c.merchantId, c]));
     const perClient = new Map();
-    let totalCommission = 0, totalAnsCommission = 0, totalVolume = 0;
+    let totalAnsCommission = 0, totalVolume = 0;
     for (const [merchantId, isoDate, amount] of PAYNIX_COMMISSION_DATA.transactions) {
       if (paynixRangeFrom && (!isoDate || isoDate < paynixRangeFrom)) continue;
       if (paynixRangeTo && (!isoDate || isoDate > paynixRangeTo)) continue;
       const rate = rateByMerchant.get(merchantId);
       if (!rate) continue;
-      const commission = calcMarginCommission(amount, rate);
       const ans = calcAnsCommission(amount, rate);
-      totalCommission += commission; totalAnsCommission += ans; totalVolume += amount;
-      if (!perClient.has(merchantId)) perClient.set(merchantId, { ...rate, totalAmount: 0, totalCommission: 0, totalAnsCommission: 0 });
+      totalAnsCommission += ans; totalVolume += amount;
+      if (!perClient.has(merchantId)) perClient.set(merchantId, { ...rate, totalAmount: 0, totalAnsCommission: 0 });
       const agg = perClient.get(merchantId);
-      agg.totalAmount += amount; agg.totalCommission += commission; agg.totalAnsCommission += ans;
+      agg.totalAmount += amount; agg.totalAnsCommission += ans;
     }
     return {
-      totalCommission: Math.round(totalCommission * 100) / 100,
       totalAnsCommission: Math.round(totalAnsCommission * 100) / 100,
       totalVolume: Math.round(totalVolume * 100) / 100,
       clients: Array.from(perClient.values()),
@@ -404,7 +396,6 @@
     document.getElementById('paynixLedgerStrip').innerHTML = `
       <div class="ledger-cell"><div class="ledger-label">Active Merchants</div><div class="ledger-figure">${d.summary?.activeMerchants ?? '-'}</div></div>
       <div class="ledger-cell"><div class="ledger-label">Payout Volume (selected range)</div><div class="ledger-figure">${fmtINR(commissionRange.totalVolume)}</div></div>
-      <div class="ledger-cell"><div class="ledger-label">Commission (selected range)</div><div class="ledger-figure accent">${fmtINR2(commissionRange.totalCommission)}</div></div>
       <div class="ledger-cell"><div class="ledger-label">Ans Commission (selected range)</div><div class="ledger-figure accent">${fmtINR2(commissionRange.totalAnsCommission)}</div></div>
     `;
 
@@ -442,17 +433,12 @@
       const c = commissionByMerchant.get(m.merchantId);
       const range = c ? computePaynixCommissionForMerchant(m.merchantId) : null;
       const volumeCell = range ? fmtINR(range.totalAmount) : '<span class="client-va">no data</span>';
-      const commissionCell = range ? fmtINR2(range.totalCommission) : '<span class="client-va">no data</span>';
       const ansCell = range ? fmtINR2(range.totalAnsCommission) : '<span class="client-va">no data</span>';
-      const pctLine = c
-        ? `<div class="client-va">${c.onboardedPct.toFixed(2)}% onboarded − ${c.resellerPct.toFixed(2)}% reseller = ${c.marginPct.toFixed(2)}% margin · Ansh ${(c.ansPct ?? 0).toFixed(2)}%</div>`
-        : '';
       return `
       <tr>
-        <td><div class="client-name">${m.merchantName}</div><div class="client-va">${m.merchantId}</div>${pctLine}</td>
+        <td><div class="client-name">${m.merchantName}</div><div class="client-va">${m.merchantId}</div></td>
         <td class="num">${volumeCell}</td>
-        <td class="num commission-cell">${commissionCell}</td>
-        <td class="num">${ansCell}</td>
+        <td class="num commission-cell">${ansCell}</td>
         <td class="num">${fmtINR2(m.wallet)}</td>
         <td class="num">${addedCell}</td>
         <td><span class="status-pill ${m.status === 'Active' ? 'active' : 'other'}">${m.status}</span></td>
@@ -547,8 +533,7 @@
 
       const COLS = [
         { key: 'sno', width: 6 }, { key: 'clientName', width: 42 }, { key: 'merchantId', width: 16 },
-        { key: 'resellerPct', width: 12 }, { key: 'onboardedPct', width: 12 }, { key: 'marginPct', width: 10 },
-        { key: 'volume', width: 16 }, { key: 'commission', width: 14 }, { key: 'ansPct', width: 10 }, { key: 'ansCommission', width: 14 },
+        { key: 'volume', width: 16 }, { key: 'ansPct', width: 10 }, { key: 'ansCommission', width: 16 },
       ];
       ws.columns = COLS;
       const NUM_COLS = COLS.length;
@@ -565,7 +550,7 @@
       titleCell.border = allBorders;
       ws.getRow(1).height = 20;
 
-      const headerLabels = ['S.NO.', 'Client Name', 'Merchant ID', 'Reseller %', 'Onboarded %', 'Margin %', 'Volume (₹)', 'Commission (₹)', 'Ansh %', 'Ansh Commission (₹)'];
+      const headerLabels = ['S.NO.', 'Client Name', 'Merchant ID', 'Volume (₹)', 'Ansh %', 'Ansh Commission (₹)'];
       const headerRow = ws.getRow(2);
       headerLabels.forEach((label, i) => {
         const cell = headerRow.getCell(i + 1);
@@ -577,72 +562,56 @@
       });
       headerRow.height = 32;
 
-      const sortedClients = [...range.clients].sort((a, b) => b.totalCommission - a.totalCommission);
-      let r = 3, sno = 1, totalCommission = 0, totalAns = 0, totalVolume = 0;
+      const sortedClients = [...range.clients].sort((a, b) => b.totalAnsCommission - a.totalAnsCommission);
+      let r = 3, sno = 1, totalAns = 0, totalVolume = 0;
       for (const c of sortedClients) {
         const excelRow = ws.getRow(r);
         excelRow.getCell(1).value = sno++;
         excelRow.getCell(2).value = c.clientName;
         excelRow.getCell(3).value = c.merchantId;
-        excelRow.getCell(4).value = c.resellerPct != null ? c.resellerPct / 100 : null;
-        excelRow.getCell(5).value = c.onboardedPct != null ? c.onboardedPct / 100 : null;
-        excelRow.getCell(6).value = c.marginPct != null ? c.marginPct / 100 : null;
-        excelRow.getCell(7).value = c.totalAmount;
-        excelRow.getCell(8).value = c.totalCommission;
-        excelRow.getCell(9).value = c.ansPct != null ? c.ansPct / 100 : null;
-        excelRow.getCell(10).value = c.totalAnsCommission;
+        excelRow.getCell(4).value = c.totalAmount;
+        excelRow.getCell(5).value = c.ansPct != null ? c.ansPct / 100 : null;
+        excelRow.getCell(6).value = c.totalAnsCommission;
 
-        excelRow.getCell(4).numFmt = '0.00%';
+        excelRow.getCell(4).numFmt = '#,##0';
         excelRow.getCell(5).numFmt = '0.00%';
-        excelRow.getCell(6).numFmt = '0.00%';
-        excelRow.getCell(7).numFmt = '#,##0';
-        excelRow.getCell(8).numFmt = '#,##0.00';
-        excelRow.getCell(9).numFmt = '0.00%';
-        excelRow.getCell(10).numFmt = '#,##0.00';
+        excelRow.getCell(6).numFmt = '#,##0.00';
 
         for (let cc = 1; cc <= NUM_COLS; cc++) {
           const cell = excelRow.getCell(cc);
           cell.border = allBorders;
           cell.alignment = { horizontal: cc === 2 ? 'left' : 'center', vertical: 'middle' };
         }
-        excelRow.getCell(8).fill = COMMISSION_FILL;
-        excelRow.getCell(8).font = { bold: true };
+        excelRow.getCell(6).fill = COMMISSION_FILL;
+        excelRow.getCell(6).font = { bold: true };
 
-        totalCommission += c.totalCommission;
         totalAns += c.totalAnsCommission;
         totalVolume += c.totalAmount;
         r++;
       }
 
       const totalRowIdx = r;
-      ws.mergeCells(totalRowIdx, 1, totalRowIdx, 6);
+      ws.mergeCells(totalRowIdx, 1, totalRowIdx, 3);
       const totalLabelCell = ws.getCell(totalRowIdx, 1);
       totalLabelCell.value = 'Total';
       totalLabelCell.font = { bold: true };
       totalLabelCell.alignment = { horizontal: 'right', vertical: 'middle' };
       totalLabelCell.border = allBorders;
-      for (let cc = 2; cc <= 6; cc++) ws.getCell(totalRowIdx, cc).border = allBorders;
+      for (let cc = 2; cc <= 3; cc++) ws.getCell(totalRowIdx, cc).border = allBorders;
 
-      const totalVolumeCell = ws.getCell(totalRowIdx, 7);
+      const totalVolumeCell = ws.getCell(totalRowIdx, 4);
       totalVolumeCell.value = Math.round(totalVolume * 100) / 100;
       totalVolumeCell.numFmt = '#,##0';
       totalVolumeCell.font = { bold: true };
       totalVolumeCell.border = allBorders;
       totalVolumeCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
-      const totalCommissionCell = ws.getCell(totalRowIdx, 8);
-      totalCommissionCell.value = Math.round(totalCommission * 100) / 100;
-      totalCommissionCell.numFmt = '#,##0.00';
-      totalCommissionCell.font = { bold: true };
-      totalCommissionCell.fill = COMMISSION_FILL;
-      totalCommissionCell.border = allBorders;
-      totalCommissionCell.alignment = { horizontal: 'center', vertical: 'middle' };
-
-      ws.getCell(totalRowIdx, 9).border = allBorders;
-      const totalAnsCell = ws.getCell(totalRowIdx, 10);
+      ws.getCell(totalRowIdx, 5).border = allBorders;
+      const totalAnsCell = ws.getCell(totalRowIdx, 6);
       totalAnsCell.value = Math.round(totalAns * 100) / 100;
       totalAnsCell.numFmt = '#,##0.00';
       totalAnsCell.font = { bold: true };
+      totalAnsCell.fill = COMMISSION_FILL;
       totalAnsCell.border = allBorders;
       totalAnsCell.alignment = { horizontal: 'center', vertical: 'middle' };
 

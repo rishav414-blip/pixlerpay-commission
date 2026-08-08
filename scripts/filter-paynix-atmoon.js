@@ -34,27 +34,37 @@ const COMMISSION_OUT = path.join('./website', 'paynix-atmoon-commission-results.
 const RESELLER_OUT = path.join('./website', 'paynix-atmoon-results.json');
 const WALLETLOG_OUT = path.join('./website', 'paynix-atmoon-wallet-log-results.json');
 
-function stripAk(client) {
-  // eslint-disable-next-line no-unused-vars
-  const { akPct, totalAkCommission, ...rest } = client;
-  return rest;
+// Keeps only what the Atmoon page actually shows: identity, Ansh
+// commission, volume/txn counts. Margin commission and the underlying
+// commercial terms (reseller/onboarded rates, flat-below-1000 bands) are
+// stripped entirely server-side here, same treatment as AK — not just
+// hidden in the UI — per explicit request 2026-08-08.
+function stripToAnsOnly(client) {
+  return {
+    clientName: client.clientName,
+    merchantId: client.merchantId,
+    ansPct: client.ansPct ?? null,
+    ansFlatBelow1000: client.ansFlatBelow1000 ?? null,
+    hasData: client.hasData,
+    successfulTxns: client.successfulTxns,
+    totalAmount: client.totalAmount,
+    totalAnsCommission: client.totalAnsCommission,
+  };
 }
 
 function filterCommission() {
   if (!fs.existsSync(COMMISSION_SRC)) return false;
   const d = JSON.parse(fs.readFileSync(COMMISSION_SRC, 'utf-8'));
-  const clients = (d.clients || []).filter((c) => ATMOON_MERCHANT_IDS.has(c.merchantId)).map(stripAk);
+  const clients = (d.clients || []).filter((c) => ATMOON_MERCHANT_IDS.has(c.merchantId)).map(stripToAnsOnly);
   const transactions = (d.transactions || []).filter(([merchantId]) => ATMOON_MERCHANT_IDS.has(merchantId));
-  let totalSuccessfulTxns = 0, totalCommission = 0, totalAnsCommission = 0;
+  let totalSuccessfulTxns = 0, totalAnsCommission = 0;
   for (const c of clients) {
     totalSuccessfulTxns += c.successfulTxns;
-    totalCommission += c.totalCommission;
     totalAnsCommission += c.totalAnsCommission;
   }
   const out = {
     generatedAt: d.generatedAt,
     totalSuccessfulTxns,
-    totalCommission: Math.round(totalCommission * 100) / 100,
     totalAnsCommission: Math.round(totalAnsCommission * 100) / 100,
     clients,
     transactions,
