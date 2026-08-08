@@ -40,15 +40,24 @@ async function scrapeWalletLog(page, login) {
   await page.waitForTimeout(3000);
 
   await page.goto('https://merchant.paynix.co.in/dashboard/wallet', { waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(2000);
 
   // The page has two tables — "Load Requests" (wallet top-ups: REQUEST ID,
   // AMOUNT, METHOD, UTR, STATUS, CREATED) and "Transaction History" (full
   // debit/credit ledger). Wallet-log entries here track top-up requests —
   // both pending and approved show up here, not filtered by status — so
   // target the Load Requests table specifically by its header text.
-  const table = page.locator('table').filter({ hasText: 'REQUEST ID' }).first();
-  const rows = table.locator('tbody tr');
+  const table = page.locator('table').filter({ hasText: 'REQUEST ID' });
+  // Wait for the table itself to render (was: a blind fixed 2s delay,
+  // which raced the table's client-side data fetch on slower loads and
+  // intermittently read 0 rows from a still-empty table — confirmed
+  // 2026-08-08 as the cause of repeated false "new" wallet-top-up alerts
+  // for Emervex, whose real entries kept getting wiped from the baseline
+  // by these empty reads). Not a full fix by itself (a merchant with
+  // genuinely zero load requests still legitimately reads 0 rows here) —
+  // paired with the previous-baseline fallback in run() below.
+  await table.first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(1000);
+  const rows = table.first().locator('tbody tr');
   const count = await rows.count();
   const entries = [];
 
@@ -117,13 +126,28 @@ async function run() {
     try {
       console.log(`Scraping wallet log for ${login.merchantName}...`);
       const entries = await scrapeWalletLog(page, login);
-      walletLogs[login.merchantId] = entries;
-      const changed = computeNewOrChangedLoadRequests(previousWalletLogs[login.merchantId], entries);
-      // Embed merchantName directly on each alert-worthy entry so
-      // telegram-alert.js doesn't need to cross-reference the separate
-      // reseller-scrape file (which it no longer has access to — that
-      // file is now exclusively refresh.yml's).
-      newLoadRequests[login.merchantId] = changed.map((e) => ({ ...e, merchantName: login.merchantName }));
+      const prevEntries = previousWalletLogs[login.merchantId];
+      if (entries.length === 0 && prevEntries?.length > 0) {
+        // A 0-row read when the previous run had real entries is far more
+        // likely a table-not-finished-rendering timing issue than the
+        // merchant's load requests genuinely vanishing (Paynix doesn't
+        // delete them). Confirmed 2026-08-08: Emervex flapped between its
+        // real 2 entries and [] across runs, re-alerting the same July
+        // top-ups as "new" every time the empty read got treated as the
+        // real baseline. Keep the previous entries and don't alert,
+        // mirroring the existing preserve-on-failure pattern below.
+        console.warn(`  0 rows scraped for ${login.merchantName} but previous run had ${prevEntries.length} — likely a render-timing hiccup, keeping previous baseline instead of overwriting with empty.`);
+        walletLogs[login.merchantId] = prevEntries;
+        newLoadRequests[login.merchantId] = [];
+      } else {
+        walletLogs[login.merchantId] = entries;
+        const changed = computeNewOrChangedLoadRequests(prevEntries, entries);
+        // Embed merchantName directly on each alert-worthy entry so
+        // telegram-alert.js doesn't need to cross-reference the separate
+        // reseller-scrape file (which it no longer has access to — that
+        // file is now exclusively refresh.yml's).
+        newLoadRequests[login.merchantId] = changed.map((e) => ({ ...e, merchantName: login.merchantName }));
+      }
     } catch (err) {
       console.warn(`Failed to scrape ${login.merchantName}: ${err.message}`);
       // Preserve the last-known-good entries instead of wiping this
