@@ -47,7 +47,17 @@ async function scrapeMerchants(page) {
   await page.waitForTimeout(2000);
 
   const rows = page.locator('table tbody tr');
-  const count = await rows.count();
+  // Same render-timing race as scrapeFailedPayouts() below — a 0-row read
+  // here would become next run's wallet-change-diffing baseline, silently
+  // swallowing genuine balance-change alerts once real data returns
+  // (prevWallet would look like "no baseline" for every merchant). Unlike
+  // failed payouts, the merchant list should never legitimately be empty
+  // once merchants exist, so re-check once before accepting 0.
+  let count = await rows.count();
+  if (count === 0) {
+    await page.waitForTimeout(2500);
+    count = await rows.count();
+  }
   const merchants = [];
 
   for (let i = 0; i < count; i++) {
@@ -86,7 +96,22 @@ async function scrapeFailedPayouts(page) {
   }
 
   const rows = page.locator('table tbody tr');
-  const count = await rows.count();
+  // A 0-row read here writes straight into the baseline
+  // computeNewFailedPayouts() diffs the *next* run against — if it's a
+  // table-still-rendering race rather than a genuine "no failures" state,
+  // the next successful read would re-flag every already-known failure as
+  // "new" (confirmed 2026-08-08 as the exact cause of a repeated false
+  // wallet-top-up alert in download-paynix-merchant-wallets.js, same
+  // fixed-delay-then-read pattern). Unlike that script's load-request list,
+  // failed payouts can legitimately drop to zero for real (failures get
+  // resolved), so instead of always trusting a stored baseline over a
+  // fresh empty read, re-check once after an extra wait — only accept 0 as
+  // genuine if it reads empty twice in a row.
+  let count = await rows.count();
+  if (count === 0) {
+    await page.waitForTimeout(2500);
+    count = await rows.count();
+  }
   const failed = [];
 
   for (let i = 0; i < Math.min(count, 100); i++) {
