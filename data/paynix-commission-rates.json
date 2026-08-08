@@ -360,5 +360,70 @@
     "ansPct": 0.3,
     "ansFlatBelow1000": 1,
     "group": null
+  },
+  {
+    "sno": 31,
+    "clientName": "KAHUA SYSTEMS PRIVATE LIMITED",
+    "merchantId": "MER_81FB09B83B4C",
+    "resellerPct": 0.7,
+    "resellerFlatBelow1000": 10,
+    "onboardedPct": 1.3,
+    "onboardedFlatBelow1000": 12,
+    "akPct": null,
+    "ansPct": 0.4,
+    "ansFlatBelow1000": 1,
+    "group": null
+  },
+  {
+    "sno": 32,
+    "clientName": "TECHMARKETIQ TECHNOLOGY PRIVATE LIMITED",
+    "merchantId": "MER_CC95D8E2A947",
+    "resellerPct": 0.7,
+    "resellerFlatBelow1000": 10,
+    "onboardedPct": 1.2,
+    "onboardedFlatBelow1000": 12,
+    "akPct": null,
+    "ansPct": 0.3,
+    "ansFlatBelow1000": 1,
+    "group": null
+  },
+  {
+    "sno": 33,
+    "clientName": "WILDBADGER TECHNOLOGY PRIVATE LIMITED",
+    "merchantId": "MER_E75F374D3B5A",
+    "resellerPct": 0.7,
+    "resellerFlatBelow1000": 10,
+    "onboardedPct": 1.2,
+    "onboardedFlatBelow1000": 12,
+    "akPct": null,
+    "ansPct": 0.3,
+    "ansFlatBelow1000": 1,
+    "group": null
+  },
+  {
+    "sno": 34,
+    "clientName": "RAAMIRO TRINTROY PRIVATE LIMITED",
+    "merchantId": "MER_0D622C7553A1",
+    "resellerPct": 0.7,
+    "resellerFlatBelow1000": 10,
+    "onboardedPct": 1.5,
+    "onboardedFlatBelow1000": 13,
+    "akPct": null,
+    "ansPct": 0.6,
+    "ansFlatBelow1000": 2,
+    "group": null
+  },
+  {
+    "sno": 35,
+    "clientName": "SHESTYLE BULK TRADERS PRIVATE LIMITED",
+    "merchantId": "MER_F2155A2A1F99",
+    "resellerPct": 0.7,
+    "resellerFlatBelow1000": 10,
+    "onboardedPct": 1.5,
+    "onboardedFlatBelow1000": 13,
+    "akPct": null,
+    "ansPct": 0.6,
+    "ansFlatBelow1000": 2,
+    "group": null
   }
 ]
