@@ -16,7 +16,9 @@
     "upload-to-drive": "node scripts/upload-to-drive.js",
     "telegram-alert": "node scripts/telegram-alert.js",
     "all": "npm run download-report && npm run calculate && npm run download-paynix && npm run download-paynix-wallets && npm run download-pixlerpay-merchant && npm run download-paynix-merchant-reports && npm run calculate-paynix && npm run upload-to-drive && npm run telegram-alert",
-    "commission-report": "node scripts/generate-commission-report.cjs"
+    "commission-report": "node scripts/generate-commission-report.cjs",
+    "health-check": "node scripts/health-check.js",
+    "sync-secret": "node scripts/sync-secret.js"
   },
   "dependencies": {
     "playwright": "^1.47.0",

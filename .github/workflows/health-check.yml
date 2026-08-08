@@ -1,0 +1,51 @@
+name: Pipeline health check
+
+# Independent of refresh.yml/wallet-alert.yml — this doesn't scrape
+# anything or touch a browser, it only reads already-published Drive
+# snapshots + the live rate-card sheet + recent workflow-run history, and
+# alerts (Telegram) if any department has gone stale or drifted without
+# anyone noticing. See scripts/health-check.js for what it checks.
+on:
+  schedule:
+    - cron: '0 * * * *' # hourly — see refresh.yml for why GitHub's
+      # schedule trigger is best-effort, not exact
+  workflow_dispatch: {}
+
+permissions:
+  actions: read # needed to query refresh.yml/wallet-alert.yml run history
+
+concurrency:
+  group: health-check
+  cancel-in-progress: false
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Write credential files from secrets
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+          GDRIVE_OAUTH_CLIENT: ${{ secrets.GDRIVE_OAUTH_CLIENT }}
+          GDRIVE_OAUTH_TOKEN: ${{ secrets.GDRIVE_OAUTH_TOKEN }}
+        run: |
+          printf '%s' "$ENV_FILE" > .env
+          printf '%s' "$GDRIVE_OAUTH_CLIENT" > data/gdrive-oauth-client.json
+          printf '%s' "$GDRIVE_OAUTH_TOKEN" > data/gdrive-oauth-token.json
+
+      - name: Run health check
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run health-check
