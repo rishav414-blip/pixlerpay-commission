@@ -46,6 +46,18 @@ const WARN_STALE_MS = 2 * 60 * 60 * 1000; // 2h
 const CRITICAL_STALE_MS = 4 * 60 * 60 * 1000; // 4h
 
 const RATE_CARD_SHEET_ID = '124ZZg6E98XyQ882t5BeNSF4ng3KWceQJmCYX0H0kIW8';
+// Clients that are visible in the live sheet but deliberately kept
+// `hidden: true` locally — a local decision independent of the sheet's
+// own row-hide state, confirmed with the user 2026-08-08 (they were
+// un-hidden in the sheet but the user wants them to stay excluded from
+// commission calc/dashboard regardless). Without this allowlist, the
+// rate-card drift check below would flag them forever.
+const INTENTIONALLY_HIDDEN_DESPITE_SHEET = new Set([
+  'GLOBAL BOOKS TRADING PVT LTD',
+  'SUVIKA VAITNIK PAY PRIVATE LIMITED',
+  'PPAY SOLUTION PRIVATE LIMITED',
+  'ANTARIKSHA DIGITECH PRIVATE LIMITED',
+]);
 const RATE_CARD_LOCAL = path.join('./data', 'paynix-commission-rates.json');
 const CREDENTIAL_SYNC_STATE_FILE = path.join('./data', 'credential-sync-state.json');
 const CREDENTIAL_FILES = [
@@ -147,7 +159,9 @@ async function checkRateCardDrift() {
       localRates.filter((r) => !r.hidden).map((r) => r.clientName.toUpperCase())
     );
 
-    const missingLocally = [...sheetNames].filter((n) => !localNames.has(n));
+    const missingLocally = [...sheetNames].filter(
+      (n) => !localNames.has(n) && !INTENTIONALLY_HIDDEN_DESPITE_SHEET.has(n)
+    );
     if (missingLocally.length) {
       flag('WARNING', `Rate card: ${missingLocally.length} client(s) in the live sheet not yet in data/paynix-commission-rates.json: ${missingLocally.join(', ')}.`);
     }
