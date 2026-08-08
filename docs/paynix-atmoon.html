@@ -1,0 +1,684 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- GitHub Pages' CDN caches this page for up to 10 min server-side (fixed,
+     can't be overridden without leaving Pages). These meta tags stop the
+     browser from ALSO caching a stale copy on top of that, so a hard
+     refresh always gets whatever the CDN currently has instead of an old
+     local copy. -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>Atmoon :: Paynix Commission Ledger</title>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+</head>
+<body>
+<style>
+  :root {
+    --bg: #12141c;
+    --surface: #191c26;
+    --surface-2: #20242f;
+    --border: #2b2f3d;
+    --text: #edeff4;
+    --text-muted: #8891a5;
+    --accent: #c9a24c;
+    --accent-soft: rgba(201, 162, 76, 0.14);
+    --success: #5ea378;
+    --success-soft: rgba(94, 163, 120, 0.14);
+    --warn: #cf8d4f;
+    --danger: #cf6161;
+    --serif: Iowan Old Style, Palatino Linotype, Palatino, Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  :root[data-theme="light"] {
+    --bg: #f4f2ec; --surface: #fdfcf9; --surface-2: #f0ede4; --border: #ddd7c8;
+    --text: #211f1a; --text-muted: #6b6558; --accent: #9c7823; --accent-soft: rgba(156, 120, 35, 0.1);
+    --success: #3d7a54; --success-soft: rgba(61, 122, 84, 0.12); --warn: #a65f22; --danger: #b0463f;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f2ec; --surface: #fdfcf9; --surface-2: #f0ede4; --border: #ddd7c8;
+      --text: #211f1a; --text-muted: #6b6558; --accent: #9c7823; --accent-soft: rgba(156, 120, 35, 0.1);
+      --success: #3d7a54; --success-soft: rgba(61, 122, 84, 0.12); --warn: #a65f22; --danger: #b0463f;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); -webkit-font-smoothing: antialiased; padding: clamp(20px, 4vw, 56px); }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  header.masthead { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 16px; padding-bottom: 20px; border-bottom: 1px solid var(--border); margin-bottom: 28px; }
+  .masthead-title { font-family: var(--serif); font-size: clamp(26px, 3.4vw, 34px); font-weight: 500; letter-spacing: 0.01em; text-wrap: balance; margin: 0; }
+  .masthead-sub { font-size: 13px; color: var(--text-muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .masthead-period { text-align: right; font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+
+  .live-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--success); }
+  .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+  .live-dot.stale { background: var(--warn); }
+  .live-dot.error { background: var(--danger); }
+  @media (prefers-reduced-motion: no-preference) {
+    .live-dot.fresh { animation: pulse 2s ease-in-out infinite; }
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  .ledger-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 3px; margin-bottom: 32px; overflow: hidden; }
+  .ledger-cell { padding: 20px 24px; border-right: 1px solid var(--border); }
+  .ledger-cell:last-child { border-right: none; }
+  .ledger-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--text-muted); margin-bottom: 10px; }
+  .ledger-figure { font-family: var(--serif); font-size: clamp(22px, 2.6vw, 30px); font-variant-numeric: tabular-nums; line-height: 1; }
+  .ledger-figure.accent { color: var(--accent); }
+  .ledger-figure small { font-family: var(--sans); font-size: 13px; color: var(--text-muted); font-weight: 400; margin-left: 4px; }
+
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+  .toolbar input[type="date"] { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 3px; padding: 9px 12px; font-size: 13.5px; font-family: var(--sans); font-variant-numeric: tabular-nums; color-scheme: dark; }
+  :root[data-theme="light"] .toolbar input[type="date"] { color-scheme: light; }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .toolbar input[type="date"] { color-scheme: light; } }
+  .toolbar input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .toolbar label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+  .toolbar-count { margin-left: auto; font-size: 12.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .btn-reset, .btn-refresh { background: none; border: 1px solid var(--border); color: var(--text-muted); border-radius: 3px; padding: 9px 13px; font-size: 13px; cursor: pointer; font-family: var(--sans); }
+  .btn-reset:hover, .btn-refresh:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-reset:focus-visible, .btn-refresh:focus-visible, .toolbar input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 3px; background: var(--surface); }
+  table { width: 100%; border-collapse: collapse; min-width: 760px; }
+  thead th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-muted); padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface-2); white-space: nowrap; }
+  tbody td { padding: 13px 16px; border-bottom: 1px solid var(--border); font-size: 13.5px; vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: var(--accent-soft); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .client-name { font-weight: 500; }
+  .client-va { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .commission-cell { color: var(--accent); font-weight: 600; }
+  .empty-row td, .state-row td { text-align: center; color: var(--text-muted); padding: 40px 16px; }
+
+  .btn-download { background: var(--accent-soft); border: 1px solid var(--accent); color: var(--accent); border-radius: 3px; padding: 9px 13px; font-size: 13px; cursor: pointer; font-family: var(--sans); font-weight: 600; }
+  .btn-download:hover { background: var(--accent); color: var(--bg); }
+  .btn-download:disabled { opacity: 0.5; cursor: not-allowed; background: var(--accent-soft); color: var(--accent); }
+  .download-error { margin-top: 10px; padding: 10px 14px; border: 1px solid var(--danger); border-radius: 3px; font-size: 12.5px; color: var(--danger); background: rgba(207, 97, 97, 0.1); display: none; }
+  .download-error.show { display: block; }
+
+  .setup-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 3px; padding: 24px; margin-bottom: 24px; font-size: 13.5px; line-height: 1.6; }
+  .setup-panel h2 { font-family: var(--serif); font-size: 18px; margin: 0 0 10px; }
+  .setup-panel .err { color: var(--danger); margin-top: 10px; font-size: 12.5px; }
+
+  footer { margin-top: 28px; font-size: 11.5px; color: var(--text-muted); text-align: center; }
+
+  .section-heading { font-family: var(--serif); font-size: 17px; font-weight: 500; margin: 28px 0 12px; }
+  .alert-note { display: flex; gap: 10px; align-items: flex-start; padding: 12px 16px; border-radius: 3px; font-size: 12.5px; line-height: 1.6; margin-bottom: 14px; border: 1px solid; }
+  #paynixFailedAlert { background: rgba(207, 97, 97, 0.1); border-color: var(--danger); color: var(--text); }
+  #paynixFailedAlert strong { color: var(--danger); white-space: nowrap; }
+  #paynixWalletAlert { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+  #paynixWalletAlert strong { color: var(--accent); white-space: nowrap; }
+  .status-pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 20px; }
+  .status-pill.active { background: var(--success-soft); color: var(--success); }
+  .status-pill.other { background: var(--surface-2); color: var(--text-muted); }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <div>
+      <h1 class="masthead-title">Atmoon :: Paynix Commission Ledger</h1>
+      <div class="masthead-sub" id="paynixMetaLine">Connecting to Google Drive…</div>
+    </div>
+    <div class="masthead-period">
+      <span class="live-badge"><span class="live-dot" id="paynixLiveDot"></span><span id="paynixLiveLabel">Connecting</span></span>
+    </div>
+  </header>
+
+  <div id="paynixSetupPanel" class="setup-panel" hidden>
+    <h2>Not connected yet</h2>
+    <p>Waiting for the Atmoon-filtered Paynix data snapshot to be published.</p>
+    <p class="err" id="paynixSetupError"></p>
+  </div>
+
+  <div id="paynixApp" hidden>
+    <div class="masthead-sub" id="paynixPeriodLine">Today + Last 30 days (rolling)</div>
+    <div class="toolbar">
+      <label>From
+        <input type="date" id="paynixRangeFrom">
+      </label>
+      <label>To
+        <input type="date" id="paynixRangeTo">
+      </label>
+      <button class="btn-reset" id="paynixResetRangeBtn" type="button">Reset filters</button>
+      <button class="btn-refresh" id="paynixRefreshBtn" type="button">↻ Refresh</button>
+      <button class="btn-download" id="paynixDownloadBtn" type="button">⬇ Download Excel</button>
+      <span class="toolbar-count" id="paynixRefreshNote">Re-fetches the latest synced snapshot from Drive</span>
+    </div>
+    <div class="download-error" id="paynixDownloadError"></div>
+
+    <section class="ledger-strip" id="paynixLedgerStrip"></section>
+
+    <div class="alert-note" id="paynixFailedAlert" hidden>
+      <strong>⚠ New failed payouts</strong>
+      <span id="paynixFailedList"></span>
+    </div>
+    <div class="alert-note" id="paynixWalletAlert" hidden>
+      <strong>↕ Wallet changes</strong>
+      <span id="paynixWalletList"></span>
+    </div>
+
+    <h2 class="section-heading">Commission by Client</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Client</th>
+            <th class="num">Volume (₹)</th>
+            <th class="num">Commission (₹)</th>
+            <th class="num">Ans Commission (₹)</th>
+            <th class="num">Wallet Balance (₹)</th>
+            <th class="num">Wallet Change (₹)</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="paynixMerchantTbody"></tbody>
+      </table>
+    </div>
+
+    <h2 class="section-heading">Recent Wallet Top-Ups</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Client</th>
+            <th>Request ID</th>
+            <th class="num">Amount (₹)</th>
+            <th>Method</th>
+            <th>UTR</th>
+            <th>Status</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody id="paynixWalletLogTbody"></tbody>
+      </table>
+    </div>
+
+    <h2 class="section-heading">Recent Failed Payouts</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Transaction</th>
+            <th>Merchant</th>
+            <th class="num">Amount (₹)</th>
+            <th>Reason</th>
+            <th>Timestamp</th>
+          </tr>
+        </thead>
+        <tbody id="paynixFailedTbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer>Commission = Onboarded % − Reseller % (margin), applied to successful transactions only. AK commission is intentionally not shown on this page.</footer>
+</div>
+
+<script>
+  // ---- Google Drive connection --------------------------------------------
+  // Server-side filtered files (scripts/filter-paynix-atmoon.js) — only
+  // ever contain these 10 merchants, AK fields stripped entirely before
+  // upload. Placeholders below get replaced with real IDs after the first
+  // workflow run creates them.
+  const DRIVE_API_KEY = 'AIzaSyDPHDn4LMUeTn3Ios3RsZgB2P_2Bz8o9gU';
+  const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // auto-refresh every 5 minutes
+
+  const PAYNIX_ATMOON_FILE_ID = 'REPLACE_WITH_ATMOON_RESULTS_FILE_ID';
+  const PAYNIX_ATMOON_WALLETLOG_FILE_ID = 'REPLACE_WITH_ATMOON_WALLETLOG_FILE_ID';
+  const PAYNIX_ATMOON_COMMISSION_FILE_ID = 'REPLACE_WITH_ATMOON_COMMISSION_FILE_ID';
+
+  const paynixUrl = `https://www.googleapis.com/drive/v3/files/${PAYNIX_ATMOON_FILE_ID}?alt=media&key=${DRIVE_API_KEY}`;
+  const paynixWalletLogUrl = `https://www.googleapis.com/drive/v3/files/${PAYNIX_ATMOON_WALLETLOG_FILE_ID}?alt=media&key=${DRIVE_API_KEY}`;
+  const paynixCommissionUrl = `https://www.googleapis.com/drive/v3/files/${PAYNIX_ATMOON_COMMISSION_FILE_ID}?alt=media&key=${DRIVE_API_KEY}`;
+
+  let PAYNIX_DATA = null;
+  let PAYNIX_COMMISSION_DATA = null;
+  let paynixRangeFrom = null;
+  let paynixRangeTo = null;
+
+  function fmtINR(n) { return '₹' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 0 }); }
+  function fmtINR2(n) { return '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+  // Paynix wallet-log timestamps look like "13/07/26, 8:42 pm"
+  // (DD/MM/YY, h:mm am/pm) — mirrors docs/index.html's parseWalletTimestamp,
+  // keep both in sync.
+  function parseWalletTimestamp(s) {
+    const m = s && String(s).match(/^(\d{2})\/(\d{2})\/(\d{2}),\s*(\d{1,2}):(\d{2})\s*(am|pm)/i);
+    if (!m) return 0;
+    let [, dd, mo, yy, hh, mm, ap] = m;
+    hh = parseInt(hh, 10);
+    if (/pm/i.test(ap) && hh !== 12) hh += 12;
+    if (/am/i.test(ap) && hh === 12) hh = 0;
+    return new Date(2000 + parseInt(yy, 10), parseInt(mo, 10) - 1, parseInt(dd, 10), hh, parseInt(mm, 10)).getTime();
+  }
+
+  const paynixLiveDot = document.getElementById('paynixLiveDot');
+  const paynixLiveLabel = document.getElementById('paynixLiveLabel');
+  function setPaynixLiveState(state, label) {
+    paynixLiveDot.className = 'live-dot ' + state;
+    paynixLiveLabel.textContent = label;
+  }
+
+  async function fetchPaynixCommissionData() {
+    try {
+      const res = await fetch(paynixCommissionUrl, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Drive fetch failed: ${res.status} ${res.statusText}`);
+      const isFirstLoad = !PAYNIX_COMMISSION_DATA;
+      PAYNIX_COMMISSION_DATA = await res.json();
+      if (isFirstLoad) initPaynixDateRange();
+    } catch (err) {
+      console.error('Atmoon commission fetch failed:', err);
+    }
+  }
+
+  function initPaynixDateRange() {
+    if (!PAYNIX_COMMISSION_DATA) return;
+    let min = null, max = null;
+    for (const [, isoDate] of PAYNIX_COMMISSION_DATA.transactions) {
+      if (!isoDate) continue;
+      if (!min || isoDate < min) min = isoDate;
+      if (!max || isoDate > max) max = isoDate;
+    }
+    paynixRangeFrom = min;
+    paynixRangeTo = max;
+    const fromInput = document.getElementById('paynixRangeFrom');
+    const toInput = document.getElementById('paynixRangeTo');
+    if (min && max) {
+      fromInput.min = min; fromInput.max = max; fromInput.value = min;
+      toInput.min = min; toInput.max = max; toInput.value = max;
+    }
+  }
+
+  // Same margin/Ans rules as calculate-paynix-commission.js — kept in sync
+  // manually. No AK calculation here at all — this page never shows it.
+  function calcMarginCommission(amount, rate) {
+    if (amount <= 1000 && rate.onboardedFlatBelow1000 != null && rate.resellerFlatBelow1000 != null) {
+      return rate.onboardedFlatBelow1000 - rate.resellerFlatBelow1000;
+    }
+    return (amount * (rate.onboardedPct - rate.resellerPct)) / 100;
+  }
+  function calcAnsCommission(amount, rate) {
+    if (rate.ansPct == null) return 0;
+    if (amount <= 1000 && rate.ansFlatBelow1000 != null) return rate.ansFlatBelow1000;
+    return (amount * rate.ansPct) / 100;
+  }
+
+  function computePaynixCommissionForMerchant(merchantId) {
+    if (!PAYNIX_COMMISSION_DATA) return null;
+    const rate = PAYNIX_COMMISSION_DATA.clients.find((c) => c.merchantId === merchantId);
+    if (!rate || !rate.hasData) return null;
+    let totalAmount = 0, totalCommission = 0, totalAnsCommission = 0, successfulTxns = 0;
+    for (const [va, isoDate, amount] of PAYNIX_COMMISSION_DATA.transactions) {
+      if (va !== merchantId) continue;
+      if (paynixRangeFrom && (!isoDate || isoDate < paynixRangeFrom)) continue;
+      if (paynixRangeTo && (!isoDate || isoDate > paynixRangeTo)) continue;
+      totalAmount += amount;
+      totalCommission += calcMarginCommission(amount, rate);
+      totalAnsCommission += calcAnsCommission(amount, rate);
+      successfulTxns += 1;
+    }
+    return {
+      totalAmount: Math.round(totalAmount * 100) / 100,
+      totalCommission: Math.round(totalCommission * 100) / 100,
+      totalAnsCommission: Math.round(totalAnsCommission * 100) / 100,
+      successfulTxns,
+    };
+  }
+
+  function computePaynixCommissionForRange() {
+    if (!PAYNIX_COMMISSION_DATA) return { totalCommission: 0, totalAnsCommission: 0, totalVolume: 0, clients: [] };
+    const rateByMerchant = new Map(PAYNIX_COMMISSION_DATA.clients.filter((c) => c.merchantId).map((c) => [c.merchantId, c]));
+    const perClient = new Map();
+    let totalCommission = 0, totalAnsCommission = 0, totalVolume = 0;
+    for (const [merchantId, isoDate, amount] of PAYNIX_COMMISSION_DATA.transactions) {
+      if (paynixRangeFrom && (!isoDate || isoDate < paynixRangeFrom)) continue;
+      if (paynixRangeTo && (!isoDate || isoDate > paynixRangeTo)) continue;
+      const rate = rateByMerchant.get(merchantId);
+      if (!rate) continue;
+      const commission = calcMarginCommission(amount, rate);
+      const ans = calcAnsCommission(amount, rate);
+      totalCommission += commission; totalAnsCommission += ans; totalVolume += amount;
+      if (!perClient.has(merchantId)) perClient.set(merchantId, { ...rate, totalAmount: 0, totalCommission: 0, totalAnsCommission: 0 });
+      const agg = perClient.get(merchantId);
+      agg.totalAmount += amount; agg.totalCommission += commission; agg.totalAnsCommission += ans;
+    }
+    return {
+      totalCommission: Math.round(totalCommission * 100) / 100,
+      totalAnsCommission: Math.round(totalAnsCommission * 100) / 100,
+      totalVolume: Math.round(totalVolume * 100) / 100,
+      clients: Array.from(perClient.values()),
+    };
+  }
+
+  async function fetchPaynixData() {
+    const setupPanel = document.getElementById('paynixSetupPanel');
+    const app = document.getElementById('paynixApp');
+    try {
+      const res = await fetch(paynixUrl, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Drive fetch failed: ${res.status} ${res.statusText}`);
+      PAYNIX_DATA = await res.json();
+      try {
+        const walletRes = await fetch(paynixWalletLogUrl, { cache: 'no-store' });
+        if (walletRes.ok) {
+          const walletData = await walletRes.json();
+          PAYNIX_DATA.walletLogs = walletData.walletLogs || {};
+          PAYNIX_DATA.walletLogsGeneratedAt = walletData.walletLogsGeneratedAt || null;
+        }
+      } catch (walletErr) {
+        console.warn('Wallet-log fetch failed:', walletErr);
+      }
+      await fetchPaynixCommissionData();
+      setupPanel.hidden = true;
+      app.hidden = false;
+      renderPaynix();
+      setPaynixLiveState('fresh', 'Live · ' + new Date().toLocaleTimeString('en-IN'));
+    } catch (err) {
+      console.error(err);
+      setPaynixLiveState('error', 'Connection failed');
+      if (!PAYNIX_DATA) {
+        setupPanel.hidden = false;
+        document.getElementById('paynixSetupError').textContent = err.message;
+        app.hidden = true;
+      }
+    }
+  }
+
+  function renderPaynix() {
+    const d = PAYNIX_DATA;
+    document.getElementById('paynixMetaLine').textContent = d.scrapedAt
+      ? 'generated ' + new Date(d.scrapedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+      : '';
+
+    const periodLine = document.getElementById('paynixPeriodLine');
+    if (paynixRangeFrom && paynixRangeTo) {
+      periodLine.textContent = paynixRangeFrom === paynixRangeTo ? paynixRangeFrom : `${paynixRangeFrom} → ${paynixRangeTo}`;
+    } else if (!PAYNIX_COMMISSION_DATA) {
+      periodLine.textContent = 'Commission data not yet published';
+    }
+
+    const commissionRange = computePaynixCommissionForRange();
+    document.getElementById('paynixLedgerStrip').innerHTML = `
+      <div class="ledger-cell"><div class="ledger-label">Active Merchants</div><div class="ledger-figure">${d.summary?.activeMerchants ?? '-'}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Payout Volume (selected range)</div><div class="ledger-figure">${fmtINR(commissionRange.totalVolume)}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Commission (selected range)</div><div class="ledger-figure accent">${fmtINR2(commissionRange.totalCommission)}</div></div>
+      <div class="ledger-cell"><div class="ledger-label">Ans Commission (selected range)</div><div class="ledger-figure accent">${fmtINR2(commissionRange.totalAnsCommission)}</div></div>
+    `;
+
+    const failedAlert = document.getElementById('paynixFailedAlert');
+    if (d.newFailedPayouts && d.newFailedPayouts.length > 0) {
+      failedAlert.hidden = false;
+      document.getElementById('paynixFailedList').textContent =
+        `${d.newFailedPayouts.length} new failed payout(s) since last check: ` +
+        d.newFailedPayouts.slice(0, 5).map((f) => f.transactionId).join(', ');
+    } else {
+      failedAlert.hidden = true;
+    }
+
+    const walletAlert = document.getElementById('paynixWalletAlert');
+    if (d.walletChanges && d.walletChanges.length > 0) {
+      walletAlert.hidden = false;
+      document.getElementById('paynixWalletList').textContent =
+        d.walletChanges.map((c) => `${c.merchantName}: ${c.delta > 0 ? '+' : ''}${fmtINR2(c.delta)}`).join(' · ');
+    } else {
+      walletAlert.hidden = true;
+    }
+
+    const changeByMerchant = new Map((d.walletChanges || []).map((c) => [c.merchantId, c.delta]));
+    const walletLogs = d.walletLogs || {};
+    const commissionByMerchant = new Map(
+      (PAYNIX_COMMISSION_DATA?.clients || []).filter((c) => c.merchantId).map((c) => [c.merchantId, c])
+    );
+    const merchantTbody = document.getElementById('paynixMerchantTbody');
+    const merchants = [...(d.merchants || [])].sort((a, b) => b.wallet - a.wallet);
+    merchantTbody.innerHTML = merchants.map((m) => {
+      const delta = changeByMerchant.get(m.merchantId);
+      const addedCell = delta != null
+        ? `<span style="color: ${delta >= 0 ? 'var(--success)' : 'var(--danger)'}">${delta > 0 ? '+' : ''}${fmtINR2(delta)}</span>`
+        : '<span class="client-va">—</span>';
+      const c = commissionByMerchant.get(m.merchantId);
+      const range = c ? computePaynixCommissionForMerchant(m.merchantId) : null;
+      const volumeCell = range ? fmtINR(range.totalAmount) : '<span class="client-va">no data</span>';
+      const commissionCell = range ? fmtINR2(range.totalCommission) : '<span class="client-va">no data</span>';
+      const ansCell = range ? fmtINR2(range.totalAnsCommission) : '<span class="client-va">no data</span>';
+      const pctLine = c
+        ? `<div class="client-va">${c.onboardedPct.toFixed(2)}% onboarded − ${c.resellerPct.toFixed(2)}% reseller = ${c.marginPct.toFixed(2)}% margin · Ansh ${(c.ansPct ?? 0).toFixed(2)}%</div>`
+        : '';
+      return `
+      <tr>
+        <td><div class="client-name">${m.merchantName}</div><div class="client-va">${m.merchantId}</div>${pctLine}</td>
+        <td class="num">${volumeCell}</td>
+        <td class="num commission-cell">${commissionCell}</td>
+        <td class="num">${ansCell}</td>
+        <td class="num">${fmtINR2(m.wallet)}</td>
+        <td class="num">${addedCell}</td>
+        <td><span class="status-pill ${m.status === 'Active' ? 'active' : 'other'}">${m.status}</span></td>
+      </tr>
+    `;
+    }).join('');
+
+    const walletLogTbody = document.getElementById('paynixWalletLogTbody');
+    const merchantNameById = new Map((d.merchants || []).map((m) => [m.merchantId, m.merchantName]));
+    const allLogEntries = [];
+    for (const [merchantId, entries] of Object.entries(walletLogs)) {
+      for (const e of entries || []) {
+        allLogEntries.push({ ...e, merchantId, merchantName: merchantNameById.get(merchantId) || merchantId });
+      }
+    }
+    allLogEntries.sort((a, b) => parseWalletTimestamp(b.createdAt) - parseWalletTimestamp(a.createdAt));
+    const recentLogEntries = allLogEntries.slice(0, 10);
+    walletLogTbody.innerHTML = recentLogEntries.length ? recentLogEntries.map((e) => `
+      <tr>
+        <td class="client-name">${e.merchantName}</td>
+        <td class="client-va">${e.requestId || '-'}</td>
+        <td class="num">${fmtINR2(e.amount)}</td>
+        <td>${e.method || '-'}</td>
+        <td class="client-va">${e.utr || '-'}</td>
+        <td><span class="status-pill ${e.status === 'Approved' ? 'active' : 'other'}">${e.status || '-'}</span></td>
+        <td class="client-va">${e.createdAt || '-'}</td>
+      </tr>
+    `).join('') : '<tr class="empty-row"><td colspan="7">No wallet top-up activity captured.</td></tr>';
+
+    const failedTbody = document.getElementById('paynixFailedTbody');
+    if (!d.failedPayouts || d.failedPayouts.length === 0) {
+      failedTbody.innerHTML = '<tr class="empty-row"><td colspan="5">No failed payouts in the latest snapshot.</td></tr>';
+    } else {
+      failedTbody.innerHTML = d.failedPayouts.map((f) => `
+        <tr>
+          <td>${f.transactionId || '-'}</td>
+          <td>${f.merchantName || (f.raw || '').split(' | ')[4] || '-'}</td>
+          <td class="num">${f.amount != null ? fmtINR(f.amount) : '-'}</td>
+          <td>${f.reason || '-'}</td>
+          <td class="client-va">${f.createdAt || '-'}</td>
+        </tr>
+      `).join('');
+    }
+  }
+
+  // ---- Download Excel -----------------------------------------------------
+  function showPaynixDownloadError(msg) {
+    const el = document.getElementById('paynixDownloadError');
+    el.textContent = msg;
+    el.classList.add('show');
+  }
+  function clearPaynixDownloadError() {
+    const el = document.getElementById('paynixDownloadError');
+    el.textContent = '';
+    el.classList.remove('show');
+  }
+
+  async function downloadPaynixExcel() {
+    clearPaynixDownloadError();
+    if (!PAYNIX_COMMISSION_DATA) {
+      showPaynixDownloadError('Commission data not yet published.');
+      return;
+    }
+    if (!paynixRangeFrom || !paynixRangeTo) {
+      showPaynixDownloadError('Select a From/To date range first.');
+      return;
+    }
+
+    let availMax = null;
+    for (const [, isoDate] of PAYNIX_COMMISSION_DATA.transactions) {
+      if (!isoDate) continue;
+      if (!availMax || isoDate > availMax) availMax = isoDate;
+    }
+    if (!availMax || paynixRangeTo > availMax) {
+      showPaynixDownloadError(`Data not available for the full selected range (${paynixRangeFrom} → ${paynixRangeTo}). Backend has fetched data only up to ${availMax || 'no data yet'}.`);
+      return;
+    }
+
+    const range = computePaynixCommissionForRange();
+    const clientsWithData = range.clients.filter((c) => c.totalAmount > 0);
+    if (clientsWithData.length === 0) {
+      showPaynixDownloadError(`No transactions found for ${paynixRangeFrom} → ${paynixRangeTo}. Nothing to export.`);
+      return;
+    }
+
+    const btn = document.getElementById('paynixDownloadBtn');
+    btn.disabled = true;
+    btn.textContent = 'Generating…';
+    try {
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Atmoon Paynix Commission');
+
+      const COLS = [
+        { key: 'sno', width: 6 }, { key: 'clientName', width: 42 }, { key: 'merchantId', width: 16 },
+        { key: 'resellerPct', width: 12 }, { key: 'onboardedPct', width: 12 }, { key: 'marginPct', width: 10 },
+        { key: 'volume', width: 16 }, { key: 'commission', width: 14 }, { key: 'ansPct', width: 10 }, { key: 'ansCommission', width: 14 },
+      ];
+      ws.columns = COLS;
+      const NUM_COLS = COLS.length;
+      const thin = { style: 'thin', color: { argb: 'FF000000' } };
+      const allBorders = { top: thin, left: thin, bottom: thin, right: thin };
+      const HEADER_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC6E0B4' } };
+      const COMMISSION_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
+
+      ws.mergeCells(1, 1, 1, NUM_COLS);
+      const titleCell = ws.getCell(1, 1);
+      titleCell.value = `Atmoon Paynix Volume ${paynixRangeFrom} to ${paynixRangeTo}`;
+      titleCell.font = { bold: true, size: 12 };
+      titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      titleCell.border = allBorders;
+      ws.getRow(1).height = 20;
+
+      const headerLabels = ['S.NO.', 'Client Name', 'Merchant ID', 'Reseller %', 'Onboarded %', 'Margin %', 'Volume (₹)', 'Commission (₹)', 'Ansh %', 'Ansh Commission (₹)'];
+      const headerRow = ws.getRow(2);
+      headerLabels.forEach((label, i) => {
+        const cell = headerRow.getCell(i + 1);
+        cell.value = label;
+        cell.font = { bold: true };
+        cell.fill = HEADER_FILL;
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        cell.border = allBorders;
+      });
+      headerRow.height = 32;
+
+      const sortedClients = [...range.clients].sort((a, b) => b.totalCommission - a.totalCommission);
+      let r = 3, sno = 1, totalCommission = 0, totalAns = 0, totalVolume = 0;
+      for (const c of sortedClients) {
+        const excelRow = ws.getRow(r);
+        excelRow.getCell(1).value = sno++;
+        excelRow.getCell(2).value = c.clientName;
+        excelRow.getCell(3).value = c.merchantId;
+        excelRow.getCell(4).value = c.resellerPct != null ? c.resellerPct / 100 : null;
+        excelRow.getCell(5).value = c.onboardedPct != null ? c.onboardedPct / 100 : null;
+        excelRow.getCell(6).value = c.marginPct != null ? c.marginPct / 100 : null;
+        excelRow.getCell(7).value = c.totalAmount;
+        excelRow.getCell(8).value = c.totalCommission;
+        excelRow.getCell(9).value = c.ansPct != null ? c.ansPct / 100 : null;
+        excelRow.getCell(10).value = c.totalAnsCommission;
+
+        excelRow.getCell(4).numFmt = '0.00%';
+        excelRow.getCell(5).numFmt = '0.00%';
+        excelRow.getCell(6).numFmt = '0.00%';
+        excelRow.getCell(7).numFmt = '#,##0';
+        excelRow.getCell(8).numFmt = '#,##0.00';
+        excelRow.getCell(9).numFmt = '0.00%';
+        excelRow.getCell(10).numFmt = '#,##0.00';
+
+        for (let cc = 1; cc <= NUM_COLS; cc++) {
+          const cell = excelRow.getCell(cc);
+          cell.border = allBorders;
+          cell.alignment = { horizontal: cc === 2 ? 'left' : 'center', vertical: 'middle' };
+        }
+        excelRow.getCell(8).fill = COMMISSION_FILL;
+        excelRow.getCell(8).font = { bold: true };
+
+        totalCommission += c.totalCommission;
+        totalAns += c.totalAnsCommission;
+        totalVolume += c.totalAmount;
+        r++;
+      }
+
+      const totalRowIdx = r;
+      ws.mergeCells(totalRowIdx, 1, totalRowIdx, 6);
+      const totalLabelCell = ws.getCell(totalRowIdx, 1);
+      totalLabelCell.value = 'Total';
+      totalLabelCell.font = { bold: true };
+      totalLabelCell.alignment = { horizontal: 'right', vertical: 'middle' };
+      totalLabelCell.border = allBorders;
+      for (let cc = 2; cc <= 6; cc++) ws.getCell(totalRowIdx, cc).border = allBorders;
+
+      const totalVolumeCell = ws.getCell(totalRowIdx, 7);
+      totalVolumeCell.value = Math.round(totalVolume * 100) / 100;
+      totalVolumeCell.numFmt = '#,##0';
+      totalVolumeCell.font = { bold: true };
+      totalVolumeCell.border = allBorders;
+      totalVolumeCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      const totalCommissionCell = ws.getCell(totalRowIdx, 8);
+      totalCommissionCell.value = Math.round(totalCommission * 100) / 100;
+      totalCommissionCell.numFmt = '#,##0.00';
+      totalCommissionCell.font = { bold: true };
+      totalCommissionCell.fill = COMMISSION_FILL;
+      totalCommissionCell.border = allBorders;
+      totalCommissionCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      ws.getCell(totalRowIdx, 9).border = allBorders;
+      const totalAnsCell = ws.getCell(totalRowIdx, 10);
+      totalAnsCell.value = Math.round(totalAns * 100) / 100;
+      totalAnsCell.numFmt = '#,##0.00';
+      totalAnsCell.font = { bold: true };
+      totalAnsCell.border = allBorders;
+      totalAnsCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      ws.views = [{ state: 'frozen', ySplit: 2 }];
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Atmoon_Paynix_Commission_${paynixRangeFrom}_to_${paynixRangeTo}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      showPaynixDownloadError('Failed to generate the report: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '⬇ Download Excel';
+    }
+  }
+
+  document.getElementById('paynixDownloadBtn').addEventListener('click', downloadPaynixExcel);
+  document.getElementById('paynixRefreshBtn').addEventListener('click', fetchPaynixData);
+  document.getElementById('paynixResetRangeBtn').addEventListener('click', () => {
+    initPaynixDateRange();
+    clearPaynixDownloadError();
+    renderPaynix();
+  });
+  document.getElementById('paynixRangeFrom').addEventListener('change', (e) => { paynixRangeFrom = e.target.value || null; clearPaynixDownloadError(); renderPaynix(); });
+  document.getElementById('paynixRangeTo').addEventListener('change', (e) => { paynixRangeTo = e.target.value || null; clearPaynixDownloadError(); renderPaynix(); });
+
+  fetchPaynixData();
+  setInterval(fetchPaynixData, REFRESH_INTERVAL_MS);
+</script>
+</body>
+</html>

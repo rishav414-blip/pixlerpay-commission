@@ -132,6 +132,14 @@ jobs:
         continue-on-error: true
         run: npm run calculate-paynix
 
+      # Filters the reseller + commission data down to the 10 "Atmoon"
+      # merchants and strips AK-commission fields, for docs/paynix-atmoon.html
+      # (a separate page meant to be shared without exposing the full
+      # merchant roster). Runs after the source data exists, before upload.
+      - name: Filter Paynix data for Atmoon page
+        continue-on-error: true
+        run: npm run filter-paynix-atmoon
+
       - name: Upload results to Drive
         if: ${{ !cancelled() }}
         run: npm run upload-to-drive

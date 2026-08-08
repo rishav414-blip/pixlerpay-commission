@@ -13,6 +13,7 @@
     "download-pixlerpay-merchant": "node scripts/download-pixlerpay-merchant.js",
     "download-paynix-merchant-reports": "node scripts/download-paynix-merchant-reports.js",
     "calculate-paynix": "node scripts/calculate-paynix-commission.js",
+    "filter-paynix-atmoon": "node scripts/filter-paynix-atmoon.js",
     "upload-to-drive": "node scripts/upload-to-drive.js",
     "telegram-alert": "node scripts/telegram-alert.js",
     "all": "npm run download-report && npm run calculate && npm run download-paynix && npm run download-paynix-wallets && npm run download-pixlerpay-merchant && npm run download-paynix-merchant-reports && npm run calculate-paynix && npm run upload-to-drive && npm run telegram-alert",

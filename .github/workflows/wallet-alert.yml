@@ -95,5 +95,6 @@ jobs:
           TELEGRAM_ALERT_SECTIONS: 'topups'
         run: |
           npm run download-paynix-wallets
+          npm run filter-paynix-atmoon
           npm run upload-to-drive
           npm run telegram-alert
