@@ -59,6 +59,11 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: npx playwright install-deps chromium
 
+      # xvfb-run wraps the "Download Paynix merchant reports" step below —
+      # not bundled by playwright install-deps, needs its own apt install.
+      - name: Install xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
       - name: Write credential files from secrets
         env:
           ENV_FILE: ${{ secrets.ENV_FILE }}
@@ -109,9 +114,19 @@ jobs:
         continue-on-error: true
         run: npm run download-pixlerpay-merchant
 
+      # This step's chromium.launch() consistently crashed at startup
+      # ("Missing X server or $DISPLAY") in CI, 100% reproducible, even
+      # though headless:true is passed the same way the three earlier
+      # scraping steps launch it. Diagnosed 2026-08-08: unlike those three,
+      # this was the only scraping step without a virtual display; wrapping
+      # in xvfb-run (as the error itself suggests) gives Chromium a display
+      # to fall back to if its headless-mode init misbehaves in this
+      # runner's container.
       - name: Download Paynix merchant reports
+        env:
+          PAYNIX_HEADFUL: 'false'
         continue-on-error: true
-        run: npm run download-paynix-merchant-reports
+        run: xvfb-run -a npm run download-paynix-merchant-reports
 
       - name: Calculate Paynix commission
         continue-on-error: true
