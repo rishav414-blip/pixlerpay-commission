@@ -442,25 +442,37 @@ the resulting page text:
   been suspended. Please contact support at support@paynix.in." on login.
   Needs the user/Paynix support to resolve account-side; no amount of
   login-script fixing helps here.
-- **Wrong password (1, needs a credentials fix)**: TECHMARKETIQ — Paynix
-  returns "Invalid credentials" for the current entry in
-  `data/paynix-merchant-logins.json`. Needs the real current password from
-  the user (not attempted — didn't want to guess/brute-force a login).
+- **Wrong email on file, fixed 2026-08-10**: TECHMARKETIQ — the stored
+  password (`Techmarketiq@1234`) was actually correct all along (confirmed
+  with the user), but the stored **email** (`techmarketiq@techmarketiq.com`)
+  gets a live `401 Invalid credentials` from Paynix's own API — verified
+  directly by watching the network response, not just the rendered page
+  text. The user supplied the real login email,
+  `techmarketiq261@gmail.com`, which Paynix accepted (200, OTP sent) and
+  which then completed a full login via `loginPaynixMerchant()` with a
+  confirmed token. Updated in `data/paynix-merchant-logins.json` (gitignored)
+  **and** mirrored to the `PAYNIX_MERCHANT_LOGINS` GitHub secret (`gh secret
+  set PAYNIX_MERCHANT_LOGINS --repo rishav414-blip/pixlerpay-commission <
+  data/paynix-merchant-logins.json`) — easy to forget just updating the
+  local file, same footgun flagged elsewhere in this doc.
 - **Genuine OTP-timing race (2, confirmed fixed)**: VYSHIKAX, WILDBADGER —
   re-tested against the *fixed* `loginPaynixMerchant()` and both now log
   in successfully with a confirmed token present.
 
-**Net effect of the fix**: of the 6 original failures, 2 are now resolved
-by code; 4 are real upstream issues (3 suspended accounts, 1 bad
-password) that will keep failing regardless of script correctness until
-someone contacts Paynix support / supplies the right password. If those 4
-merchants show 0 data going forward, that's expected and not a sign the
-OTP fix regressed — check for "suspended"/"Invalid credentials" in the
-run log before assuming otherwise.
+**Net effect of the fixes**: of the 6 original failures, 3 are now
+resolved by code/data fixes (VYSHIKAX + WILDBADGER via the token-wait fix,
+TECHMARKETIQ via the corrected login email); **3 remain genuine
+upstream account issues** (ANTARIKSHA DIGITECH, SUVIKA VAITNIK PAY,
+Bitnexy — all showing "Your account has been suspended. Please contact
+support at support@paynix.in.") that no script change can fix — needs the
+user or Paynix support to resolve account-side. If those 3 merchants show
+0 data going forward, that's expected and not a sign of a regression —
+check for "suspended" specifically in the run log before assuming
+otherwise.
 
-Fix committed and pushed as a follow-up. **Not yet re-verified against a
-full live `refresh.yml` run** — the next scheduled or manually-triggered
-run is the real test of the token-wait change across the full fleet.
+Both fixes committed and pushed. **Re-verification against a full live
+`refresh.yml` run across all merchants (with the token-wait fix + the
+corrected TECHMARKETIQ email) is still pending** as of this writing.
 
 ## Master reconciliation sheet spot-check, 2026-08-10
 
