@@ -408,21 +408,59 @@ alerts/scrapes are also silently failing, check whether OTP shows up there
 too.
 
 **Verification status**: confirmed the OTP *screen* live for one merchant
-(Curiobyte), then hit Paynix's own OTP rate limit ("Too many OTP requests.
-Please try again in 15 minutes.") on repeated test logins for that same
-account, which blocked testing the full submit flow there. **Full
-end-to-end login (fill `123456` → "Verify & Log in" → land on dashboard
-with a valid `paynix_access_token`) confirmed working against a different
-merchant (DIGIROUTE GLOBALTECH SERVICES PRIVATE LIMITED)** — reached
-`https://merchant.paynix.co.in/dashboard`, wallet balance rendered
-(₹1,64,456.52), `localStorage.paynix_access_token` present. `loginPaynixMerchant()`
-is confirmed working as implemented. Pushed live 2026-08-10 after this
-verification. Still worth watching the first real scheduled `refresh.yml`
-run across all merchants — if any individual merchant's login still fails,
-check for the rate-limit message specifically in the page text before
-assuming the OTP code itself is wrong (running 15+ merchant logins back to
-back every 15-30 min could plausibly retrigger Paynix's rate limit at
-scale even though a single login works fine).
+(Curiobyte), then hit Paynix's own OTP rate limit on repeated test logins
+for that account. Full end-to-end login confirmed against DIGIROUTE.
+Pushed live 2026-08-10 (commit `1ecf568`), then manually triggered both
+`refresh.yml` and `wallet-alert.yml` via `workflow_dispatch` to verify
+against the real full merchant fleet rather than waiting for the next
+scheduled tick.
+
+**Real-world result, `wallet-alert.yml`**: all 20 merchants scraped
+successfully, 0 failures.
+
+**Real-world result, `refresh.yml`**: pipeline succeeded overall (every
+step green, Drive upload + Telegram alert both sent), but the
+"Download Paynix merchant reports" step logged 6/20 merchant failures
+with `UNAUTHORIZED: Invalid or expired token`. **Root-caused and fixed
+same day**: `loginPaynixMerchant()`'s original `waitForTimeout(3000)`
+after the OTP "Verify & Log in" click was a fixed guess, not a real
+confirmation that `localStorage.paynix_access_token` had actually been
+written — under CI network latency (slower than local dev) this
+sometimes raced ahead of the token being set, so the very next API call
+sent `Authorization: Bearer null`/stale and got rejected. **Fixed** by
+replacing the fixed sleep with `page.waitForFunction(() =>
+localStorage.getItem('paynix_access_token'), { timeout: 15000 })` — an
+explicit wait for the token to actually exist, throwing a clear error if
+it never appears (rather than silently proceeding with no/stale token and
+producing a confusing downstream `UNAUTHORIZED` from the payouts API).
+
+**Then individually diagnosed all 6 originally-failed merchants** (not
+assumed to be race conditions) by logging into each directly and reading
+the resulting page text:
+- **Suspended accounts (3, not fixable by this script)**: ANTARIKSHA
+  DIGITECH, SUVIKA VAITNIK PAY, Bitnexy — Paynix shows "Your account has
+  been suspended. Please contact support at support@paynix.in." on login.
+  Needs the user/Paynix support to resolve account-side; no amount of
+  login-script fixing helps here.
+- **Wrong password (1, needs a credentials fix)**: TECHMARKETIQ — Paynix
+  returns "Invalid credentials" for the current entry in
+  `data/paynix-merchant-logins.json`. Needs the real current password from
+  the user (not attempted — didn't want to guess/brute-force a login).
+- **Genuine OTP-timing race (2, confirmed fixed)**: VYSHIKAX, WILDBADGER —
+  re-tested against the *fixed* `loginPaynixMerchant()` and both now log
+  in successfully with a confirmed token present.
+
+**Net effect of the fix**: of the 6 original failures, 2 are now resolved
+by code; 4 are real upstream issues (3 suspended accounts, 1 bad
+password) that will keep failing regardless of script correctness until
+someone contacts Paynix support / supplies the right password. If those 4
+merchants show 0 data going forward, that's expected and not a sign the
+OTP fix regressed — check for "suspended"/"Invalid credentials" in the
+run log before assuming otherwise.
+
+Fix committed and pushed as a follow-up. **Not yet re-verified against a
+full live `refresh.yml` run** — the next scheduled or manually-triggered
+run is the real test of the token-wait change across the full fleet.
 
 ## Master reconciliation sheet spot-check, 2026-08-10
 

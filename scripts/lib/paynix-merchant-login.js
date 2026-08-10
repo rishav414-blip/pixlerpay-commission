@@ -15,6 +15,17 @@
 // requests. Please try again in 15 minutes.") — if logins still fail after
 // this, check whether the rate limit is the cause (too many runs in a
 // short window) rather than the OTP handling itself being wrong.
+//
+// **Bug found and fixed 2026-08-10, same day**: the first version of this
+// helper just did a flat `waitForTimeout(3000)` after clicking "Verify &
+// Log in" (or after the plain "Log in" click, if no OTP appeared), then
+// assumed `localStorage.paynix_access_token` was ready. In the first live
+// full-pipeline run after deploying this, 6 of 20 merchants failed with
+// `UNAUTHORIZED: Invalid or expired token` from the payouts API — a race
+// between the token actually being written to localStorage post-login and
+// the fixed 3s guess, worse under CI network latency than in local
+// testing. Fixed by polling for the token to actually appear (up to 15s)
+// instead of guessing a fixed delay.
 export async function loginPaynixMerchant(page, loginUrl, username, password) {
   await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
   await page.getByRole('textbox', { name: 'Email address' }).fill(username);
@@ -32,5 +43,16 @@ export async function loginPaynixMerchant(page, loginUrl, username, password) {
     await page.getByRole('button', { name: /verify/i }).click();
   }
 
-  await page.waitForTimeout(3000);
+  const tokenReady = await page
+    .waitForFunction(() => !!localStorage.getItem('paynix_access_token'), { timeout: 15000 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (!tokenReady) {
+    throw new Error('paynix_access_token never appeared in localStorage after login (OTP step may have failed silently)');
+  }
+
+  // Small settle margin — the token existing doesn't guarantee the app has
+  // finished its own post-login redirect/state setup.
+  await page.waitForTimeout(500);
 }
