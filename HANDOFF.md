@@ -1,7 +1,7 @@
 
 # Handoff — PixlerPay / Paynix Commission Dashboard
 
-Last updated: 2026-08-03 (Ansh Part commission added to the dashboard + AK/Ansh rate-card corrections, AK removed for 3 clients — see below)
+Last updated: 2026-08-10 (Paynix merchant-portal OTP step broke the pipeline, fixed; also a Master reconciliation sheet spot-check of 14 payout IDs — see below)
 
 ## What this project is
 
@@ -374,6 +374,80 @@ transaction volume, only wallet balance/status.
   needs a new `PAYNIX_MERCHANT_LOGINS`-style secret check — actually reuses
   the existing `PAYNIX_MERCHANT_LOGINS` secret already set for wallet
   scraping, no new secret needed there.
+
+## Merchant-portal OTP step broke the pipeline, fixed 2026-08-10
+
+User reported Telegram alerts and data refresh had stopped working, and
+suspected Paynix's merchant portal (`merchant.paynix.co.in`) had started
+asking for an OTP after email/password. Confirmed live by scripting a
+login attempt: the portal now shows a second step — "A 6-digit code was
+sent to `<email>`. Valid for 10 minutes." — with an `input#otp`
+(placeholder "6-digit code", maxlength 6) and a "Verify & Log in" button.
+This is new; the three scripts that log into this portal
+(`download-paynix-merchant-reports.js`, `download-paynix-merchant-wallets.js`,
+`download-pixlerpay-merchant.js`) only ever did single-step email+password,
+so every merchant login has been hanging/failing silently since Paynix
+added this step — explaining both the stalled data refresh and the silent
+Telegram alerts.
+
+Per the user: **every account's OTP is a fixed `123456`** (not a real
+per-run emailed code — a test/sandbox value), so this can be filled in
+directly without reading email.
+
+**Fix**: new shared helper `scripts/lib/paynix-merchant-login.js`
+(`loginPaynixMerchant(page, loginUrl, username, password)`) — does the
+existing email/password/Log-in step, then waits up to 8s for `#otp` to
+appear; if it does, fills `123456` and clicks "Verify & Log in"; if not
+(e.g. a trusted-device/session skips it), proceeds as before. All three
+merchant-portal-login scripts above now call this helper instead of their
+own inline (now-broken) two-line login block. The reseller-portal login in
+`download-paynix.js` (`reseller.paynix.co.in`, a different login/subdomain)
+was **not** touched — the user's report was specifically about the
+merchant login, and this wasn't confirmed to need the same fix. If reseller
+alerts/scrapes are also silently failing, check whether OTP shows up there
+too.
+
+**Verification status**: confirmed the OTP *screen* live for one merchant
+(Curiobyte), then hit Paynix's own OTP rate limit ("Too many OTP requests.
+Please try again in 15 minutes.") on repeated test logins for that same
+account, which blocked testing the full submit flow there. **Full
+end-to-end login (fill `123456` → "Verify & Log in" → land on dashboard
+with a valid `paynix_access_token`) confirmed working against a different
+merchant (DIGIROUTE GLOBALTECH SERVICES PRIVATE LIMITED)** — reached
+`https://merchant.paynix.co.in/dashboard`, wallet balance rendered
+(₹1,64,456.52), `localStorage.paynix_access_token` present. `loginPaynixMerchant()`
+is confirmed working as implemented. Pushed live 2026-08-10 after this
+verification. Still worth watching the first real scheduled `refresh.yml`
+run across all merchants — if any individual merchant's login still fails,
+check for the rate-limit message specifically in the page text before
+assuming the OTP code itself is wrong (running 15+ merchant logins back to
+back every 15-30 min could plausibly retrigger Paynix's rate limit at
+scale even though a single login works fine).
+
+## Master reconciliation sheet spot-check, 2026-08-10
+
+User pasted a screenshot of 14 `PAY_OUT_*` IDs (from an unspecified upstream
+source, not identified in this session) and asked whether they're present
+in the Master reconciliation sheet. Done from a different project session
+(`Personal calculation`, not this repo's own session) with no access to
+`rinariapexservices@gmail.com` or this repo's scripts — checked instead via
+a one-off Drive `read_file_content` read after the user shared the sheet
+with `rishav414@gmail.com` (view access). All 14 were found:
+
+- 12 `SUCCESS`.
+- 2 still `PROCESSING` (no UTR, no completed-at timestamp) as of the sheet
+  snapshot read: `PAY_OUT_1EA2DC3D8A1E` (Curiobyte, ₹2,380, created
+  2026-07-17 23:59:59) and `PAY_OUT_D03279D355CC` (Curiobyte, ₹10,000,
+  created 2026-07-17 12:10:04). Worth a follow-up check on whether these
+  have since resolved to SUCCESS/FAILED — the sheet may be stale relative
+  to Paynix's live status.
+
+No script changes made. If this kind of ad-hoc ID lookup against the
+Master reconciliation sheet becomes routine, worth adding a small script
+here (`scripts/`) that takes a list of payoutIds and checks them against
+the sheet via the Sheets API + `rinariapexservices` credential, instead of
+depending on manual Drive-share access from an unrelated project session
+each time.
 
 ## Paynix commission cross-check report, added 2026-07-17
 

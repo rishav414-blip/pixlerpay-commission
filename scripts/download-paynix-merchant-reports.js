@@ -26,6 +26,7 @@ import 'dotenv/config';
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
+import { loginPaynixMerchant } from './lib/paynix-merchant-login.js';
 
 const MERCHANT_LOGIN_URL = 'https://merchant.paynix.co.in/auth/login';
 const LOGINS_FILE = path.join('./data', 'paynix-merchant-logins.json');
@@ -96,11 +97,7 @@ async function run() {
     const page = await context.newPage();
     try {
       console.log(`Logging into ${login.merchantName} (${login.merchantId})...`);
-      await page.goto(MERCHANT_LOGIN_URL, { waitUntil: 'domcontentloaded' });
-      await page.getByRole('textbox', { name: 'Email address' }).fill(login.username);
-      await page.getByRole('textbox', { name: 'Password' }).fill(login.password);
-      await page.getByRole('button', { name: 'Log in' }).click();
-      await page.waitForTimeout(3000);
+      await loginPaynixMerchant(page, MERCHANT_LOGIN_URL, login.username, login.password);
       // Need to be on a page under the app's origin for localStorage
       // (holding the access token) to be readable by page.evaluate.
       await page.goto('https://merchant.paynix.co.in/dashboard', { waitUntil: 'domcontentloaded' });

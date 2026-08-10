@@ -4,6 +4,7 @@ import xlsx from 'xlsx';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fetchPreviousFromDrive } from './lib/drive-fetch.js';
+import { loginPaynixMerchant } from './lib/paynix-merchant-login.js';
 
 const {
   PIXLERPAY_MERCHANT_LOGIN_URL = 'https://merchant.paynix.co.in/auth/login',
@@ -176,11 +177,7 @@ async function run() {
   const page = await context.newPage();
 
   console.log('Logging into PixlerPay Paynix merchant account...');
-  await page.goto(PIXLERPAY_MERCHANT_LOGIN_URL, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('textbox', { name: 'Email address' }).fill(PIXLERPAY_MERCHANT_USERNAME);
-  await page.getByRole('textbox', { name: 'Password' }).fill(PIXLERPAY_MERCHANT_PASSWORD);
-  await page.getByRole('button', { name: 'Log in' }).click();
-  await page.waitForTimeout(3000);
+  await loginPaynixMerchant(page, PIXLERPAY_MERCHANT_LOGIN_URL, PIXLERPAY_MERCHANT_USERNAME, PIXLERPAY_MERCHANT_PASSWORD);
 
   console.log('Scraping wallet balance...');
   const walletBalance = await scrapeWalletBalance(page);
