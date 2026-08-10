@@ -49,7 +49,16 @@ export async function loginPaynixMerchant(page, loginUrl, username, password) {
     .catch(() => false);
 
   if (!tokenReady) {
-    throw new Error('paynix_access_token never appeared in localStorage after login (OTP step may have failed silently)');
+    // Surface *why* — "suspended", "Invalid credentials", "Too many OTP
+    // requests", or something new — directly in the thrown error instead of
+    // making the next person re-run a manual debug script to find out.
+    // Added 2026-08-10 after VYSHIKAX/WILDBADGER (confirmed working in
+    // isolated manual tests minutes earlier) failed again in the very next
+    // full-fleet CI run — almost certainly because those manual tests had
+    // just consumed their OTP quota and tripped Paynix's per-account rate
+    // limit, but that was a guess at the time; this makes it provable.
+    const pageText = await page.evaluate(() => document.body.innerText.slice(0, 200)).catch(() => '(could not read page text)');
+    throw new Error(`paynix_access_token never appeared in localStorage after login. Page text: ${JSON.stringify(pageText)}`);
   }
 
   // Small settle margin — the token existing doesn't guarantee the app has
