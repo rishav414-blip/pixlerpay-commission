@@ -470,9 +470,59 @@ user or Paynix support to resolve account-side. If those 3 merchants show
 check for "suspended" specifically in the run log before assuming
 otherwise.
 
-Both fixes committed and pushed. **Re-verification against a full live
-`refresh.yml` run across all merchants (with the token-wait fix + the
-corrected TECHMARKETIQ email) is still pending** as of this writing.
+Both fixes committed and pushed. Also added (commit `255d45d`): the login
+helper now captures the page's visible text at failure time in the thrown
+error, so future failures self-diagnose (suspended / wrong-credentials /
+rate-limited / other) from the run log alone, without another manual
+debug session.
+
+**Second live run, `31395289479`** (token-wait fix live, TECHMARKETIQ
+email fix not yet live): 14/20 succeeded. Confirmed the 3 suspended
+accounts + TECHMARKETIQ (expected, fix not deployed yet) — but **VYSHIKAX
+and WILDBADGER also failed**, despite passing in isolated manual tests
+minutes earlier. Working theory: those manual tests had just consumed
+their OTP quota and tripped Paynix's per-account rate limit (same lockout
+hit earlier with Curiobyte), not a resurfacing of the token-race bug — but
+this wasn't proven at the time (the old error message didn't say why),
+which is what motivated the page-text diagnostic added in `255d45d`.
+Rechecked both accounts manually afterward and the rate-limit message was
+gone, consistent with the rate-limit theory.
+
+**Third live run, `31397576820`** (all fixes live — token-wait,
+TECHMARKETIQ email, page-text diagnostics): **0/20 succeeded**, but for an
+unrelated reason — `page.goto` timed out reaching
+`https://merchant.paynix.co.in/auth/login` for every single merchant, and
+the same run's "Download Paynix reseller data" step independently failed
+with `net::ERR_CONNECTION_TIMED_OUT` reaching
+`https://reseller.paynix.co.in/auth/login` (a completely different
+subdomain, unrelated code path, after its own built-in retry logic in
+`gotoWithRetry` — see the Automation section). **Both Paynix subdomains
+became unreachable from the GitHub Actions runner mid-run.** This is not
+an OTP/login-code issue — plain connection timeouts happen before any
+page content loads. Two explanations, not yet distinguished: (a) a genuine
+Paynix-side outage at that moment, or (b) this session's own testing
+volume (3 manual `workflow_dispatch` runs of `refresh.yml` + 1 of
+`wallet-alert.yml`, plus ~10 ad-hoc local Playwright login scripts against
+individual merchant accounts, all within roughly 90 minutes) tripping a
+rate-limit/WAF block at the network level rather than the application
+level. **Deliberately stopped triggering further automated runs at this
+point** rather than adding more load while the cause is ambiguous — if
+it's (b), more requests make it worse; if it's (a), more requests don't
+help either.
+
+**Status as of this writing**: the OTP fix, token-race fix, and
+TECHMARKETIQ credential fix are all committed, pushed, and were each
+individually verified working via isolated manual tests. **None have been
+confirmed together in one clean full-fleet run** — the two attempts after
+all three fixes landed were blocked by the connectivity issue above before
+they could exercise the actual login code meaningfully. Next step: wait
+before retrying (the reseller-side `gotoWithRetry` already backs off up to
+40s per attempt and still failed, so this isn't a momentary blip — give it
+real time, e.g. try again after 30-60+ min, or wait for the next scheduled
+`refresh.yml`/`wallet-alert.yml` tick rather than another manual trigger).
+If it's still unreachable after a longer wait, that points to (a) a real
+Paynix outage — check Paynix's own status page/support if one exists —
+over (b) self-inflicted throttling.
 
 ## Master reconciliation sheet spot-check, 2026-08-10
 
