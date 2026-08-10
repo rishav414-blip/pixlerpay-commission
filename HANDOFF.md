@@ -1,7 +1,7 @@
 
 # Handoff — PixlerPay / Paynix Commission Dashboard
 
-Last updated: 2026-08-10 (Paynix merchant-portal OTP step broke the pipeline, fixed; also a Master reconciliation sheet spot-check of 14 payout IDs — see below)
+Last updated: 2026-08-10 (Paynix merchant-portal OTP step broke the pipeline, fixed; a Master reconciliation sheet spot-check of 14 payout IDs; and a new ad-hoc PixlerPay wallet-balance check script — see below)
 
 ## What this project is
 
@@ -524,6 +524,48 @@ If it's still unreachable after a longer wait, that points to (a) a real
 Paynix outage — check Paynix's own status page/support if one exists —
 over (b) self-inflicted throttling.
 
+**Resolution, ~40 min later**: connectivity came back on its own — a
+`wallet-alert.yml` run (both a manually-triggered one and, notably, a
+genuine `schedule`-triggered one, not `workflow_dispatch`) succeeded with
+all 20 merchants, confirming (a) a transient Paynix-side issue, not (b)
+throttling from this session (a real scheduled trigger from GitHub's own
+cron, with no involvement from this session, would have hit the same
+block if it were IP/traffic-based).
+
+**Second, separate root cause found while checking `health-check.js`'s
+alerts** (per explicit user request to "check the notified issues"): the
+CRITICAL alert "Paynix reseller: last updated 9.0h ago" was not explained
+by the connectivity blip above — it turned out **the reseller portal
+(`reseller.paynix.co.in`) had *also* silently started requiring the same
+OTP step as the merchant portal**, confirmed live ("A one-time code was
+sent to your email" on `download-paynix.js`'s login page). This doc's
+earlier note ("If reseller alerts/scrapes are also silently failing,
+check whether OTP shows up there too") turned out to be exactly right.
+`download-paynix.js`'s login block had never been updated for OTP, so
+every reseller login all day was silently failing — redirected back to
+`/auth/login` post-"login", which then made `scrapeFailedPayouts()`'s
+`getByRole('tab', { name: 'Payouts' })` click time out (never really on
+the transactions page). This step has `continue-on-error: true` in
+`refresh.yml`, which is exactly why the job kept reporting overall
+"success" while silently producing zero fresh reseller data all day —
+the health-check's staleness alert is what actually caught it, not the
+job status.
+
+**Fix**: `scripts/lib/paynix-merchant-login.js` split into
+`loginPaynixMerchant()` (does its own `page.goto` + login, used by the
+three merchant-portal scripts) and a new `completePaynixLogin(page,
+username, password)` (just the fill/OTP/token-wait part, no `goto`) — so
+`download-paynix.js` can keep using its own `gotoWithRetry()` for the
+initial navigation (needed for real network resilience, as proven by the
+connectivity issue above) while reusing the same OTP-handling logic
+afterward. Verified locally end-to-end: `node scripts/download-paynix.js`
+completed a full run (login → dashboard summary → merchants/wallets →
+failed payouts) and wrote a freshly-timestamped `website/paynix-results.json`.
+**Lesson for next time a Paynix login step degrades**: check
+`continue-on-error` steps' actual log output, not just the job's overall
+green/red status — a step can silently produce nothing while the job
+still reports success.
+
 ## Master reconciliation sheet spot-check, 2026-08-10
 
 User pasted a screenshot of 14 `PAY_OUT_*` IDs (from an unspecified upstream
@@ -548,6 +590,38 @@ here (`scripts/`) that takes a list of payoutIds and checks them against
 the sheet via the Sheets API + `rinariapexservices` credential, instead of
 depending on manual Drive-share access from an unrelated project session
 each time.
+
+## PixlerPay merchant wallet-balance check, added 2026-08-10
+
+The PixlerPay tab has never scraped a wallet balance for its 18 merchant
+accounts — `download-report.js` only exports payout reports for commission
+calc (unlike the Paynix side, which has always tracked wallet balance). User
+asked for a one-off "check every PixlerPay merchant's wallet balance" —
+confirmed live that PixlerPay's dashboard (`https://pixlerpay.com/merchant/dashboard`,
+reached right after login, no extra navigation) shows a "Wallet Balance"
+badge top-right, same spot on every account.
+
+**New script**: `scripts/check-pixlerpay-wallets.mjs` (`npm run
+check-pixlerpay-wallets`) — logs into each of the 18 accounts in
+`data/accounts.json` sequentially, reads the "Wallet Balance" badge text,
+prints per-account results to the console, and writes the full set to
+`wallet-check-results.json` (gitignored, root-level working file — added to
+`.gitignore`). **Deliberately not wired into `npm run all` or the dashboard**
+— this is a manual, on-demand check only, same pattern as the Paynix
+cross-check scripts below. If this needs to become a regular/automated
+dashboard field instead, that's a separate follow-up (would mean adding a
+`wallet` field to `download-report.js`'s per-account scrape, threading it
+through `calculate-commission.js` into `commission-results.json`, and adding
+a column/badge to the PixlerPay tab in `docs/index.html` — not done here).
+
+**First live run result (2026-08-10)**: 17 of 18 accounts read successfully;
+**N V CONNECT ACROSS PRIVATE LIMITED failed** — consistent with the
+already-known broken/mismatched portal layout for this client flagged
+elsewhere in this file (the PixlerPay tab's manual-override client). Total
+wallet balance across the other 17 (excluding SERVM, per the user's specific
+ask that day): ₹41,756.68. Highest single balance was SERVM TECHNO
+INNOVATIONS (₹1,16,481.16, excluded from that total); several accounts sit
+near-zero (Curiobyte ₹0.00, Elleaura ₹0.31, SOSHY ₹0.16).
 
 ## Paynix commission cross-check report, added 2026-07-17
 

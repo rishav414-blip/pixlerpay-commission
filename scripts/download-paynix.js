@@ -3,6 +3,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fetchPreviousFromDrive } from './lib/drive-fetch.js';
+import { completePaynixLogin } from './lib/paynix-merchant-login.js';
 
 const {
   PAYNIX_LOGIN_URL = 'https://reseller.paynix.co.in/auth/login',
@@ -252,10 +253,7 @@ async function run() {
 
   console.log('Logging into Paynix reseller portal...');
   await gotoWithRetry(page, PAYNIX_LOGIN_URL, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('textbox', { name: 'Email address' }).fill(PAYNIX_USERNAME);
-  await page.getByRole('textbox', { name: 'Password' }).fill(PAYNIX_PASSWORD);
-  await page.getByRole('button', { name: 'Log in' }).click();
-  await page.waitForTimeout(3000);
+  await completePaynixLogin(page, PAYNIX_USERNAME, PAYNIX_PASSWORD);
 
   console.log('Scraping dashboard summary...');
   const summary = await scrapeDashboardSummary(page);

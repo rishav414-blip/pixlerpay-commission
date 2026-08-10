@@ -1,6 +1,16 @@
-// Shared login helper for merchant.paynix.co.in, used by all three scripts
-// that log into individual merchant portals (download-paynix-merchant-reports.js,
-// download-paynix-merchant-wallets.js, download-pixlerpay-merchant.js).
+// Shared login helper, originally for merchant.paynix.co.in (used by
+// download-paynix-merchant-reports.js, download-paynix-merchant-wallets.js,
+// download-pixlerpay-merchant.js) — **also confirmed 2026-08-10 to apply to
+// the reseller portal** (reseller.paynix.co.in, used by download-paynix.js).
+// The health-check alerted that Paynix reseller data was 9h stale despite
+// refresh.yml reporting "success" every run; the reseller login step has
+// `continue-on-error: true`, which was masking a real failure. Root cause:
+// Paynix added the exact same OTP step to the reseller login too, and
+// download-paynix.js's login block had never been updated for it — so every
+// reseller login silently failed post-login (redirected back to
+// /auth/login), and scrapeFailedPayouts()'s "Payouts" tab click then timed
+// out because it was never really on the transactions page. Fixed by
+// switching download-paynix.js to this same helper.
 //
 // Added 2026-08-10: Paynix started requiring a 6-digit email OTP after
 // email/password on this portal (input#otp, placeholder "6-digit code",
@@ -28,6 +38,13 @@
 // instead of guessing a fixed delay.
 export async function loginPaynixMerchant(page, loginUrl, username, password) {
   await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
+  await completePaynixLogin(page, username, password);
+}
+
+// Split out so callers that need their own page.goto (e.g.
+// download-paynix.js's gotoWithRetry, for network-flakiness resilience) can
+// still reuse the fill/OTP/token-wait logic without a duplicate goto.
+export async function completePaynixLogin(page, username, password) {
   await page.getByRole('textbox', { name: 'Email address' }).fill(username);
   await page.getByRole('textbox', { name: 'Password' }).fill(password);
   await page.getByRole('button', { name: 'Log in' }).click();
