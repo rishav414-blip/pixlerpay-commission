@@ -273,13 +273,19 @@ async function run() {
 
   const critical = issues.filter((i) => i.severity === 'CRITICAL');
   const warnings = issues.filter((i) => i.severity === 'WARNING');
-  let text = `🔔 <b>Health Check</b>\n`;
-  if (critical.length) {
-    text += `\n<b>🛑 Critical (${critical.length})</b>\n` + critical.map((i) => `• ${i.text}`).join('\n') + '\n';
+
+  // Telegram only fires for CRITICAL issues — per explicit request
+  // 2026-08-11, warnings are noisy/lower-signal (idle clients, rate-card
+  // drift, a single stale-but-not-broken source) and were competing for
+  // attention with genuinely urgent CRITICAL ones. Warnings still show up
+  // in the CI run log above for anyone actually looking, just never in
+  // Telegram. A run with only warnings and no criticals sends nothing.
+  if (critical.length === 0) {
+    console.log(`${warnings.length} warning(s) logged above, no Telegram alert sent (warnings-only).`);
+    return;
   }
-  if (warnings.length) {
-    text += `\n<b>⚠️ Warning (${warnings.length})</b>\n` + warnings.map((i) => `• ${i.text}`).join('\n') + '\n';
-  }
+
+  const text = `🔔 <b>Health Check</b>\n\n<b>🛑 Critical (${critical.length})</b>\n` + critical.map((i) => `• ${i.text}`).join('\n');
   await sendTelegramMessage(text.trim());
 }
 

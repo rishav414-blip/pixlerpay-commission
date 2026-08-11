@@ -4,7 +4,7 @@ import path from 'node:path';
 
 const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALERT_SECTIONS, TELEGRAM_ATMOON_CHAT_ID } = process.env;
 
-// These 9 merchants' wallet top-up alerts route exclusively to the
+// These merchants' wallet top-up alerts route exclusively to the
 // "Atmoon :: Paynix : Pixler" Telegram group instead of the default chat
 // — added 2026-08-07 per explicit request (that group should only ever
 // show these merchants, not the full Paynix roster). Failed-payout
@@ -19,6 +19,7 @@ const ATMOON_MERCHANT_IDS = new Set([
   'MER_EB1BE5D25983', // VYSHIKAX TECHNOLOGY PRIVATE LIMITED
   'MER_810B49283330', // VELCYNTRA TECHNOLOGIES PRIVATE LIMITED
   'MER_19F368135CE0', // ZYPHERON TECHNOLOGY PRIVATE LIMITED
+  'MER_1F18C5EDCA3B', // RASHEEYA TECHNOLOGY PRIVATE LIMITED — added 2026-08-11 per explicit request
 ]);
 const PAYNIX_RESULTS_FILE = path.join('./website', 'paynix-results.json');
 // Own dedicated file (see download-paynix-merchant-wallets.js) — split
