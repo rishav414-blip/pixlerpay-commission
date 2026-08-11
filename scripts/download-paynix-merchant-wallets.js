@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fetchPreviousFromDrive } from './lib/drive-fetch.js';
 import { loginPaynixMerchant, getAuthenticatedContext } from './lib/paynix-merchant-login.js';
+import { getSuspendedMerchantIds } from './lib/suspended-merchants.js';
 
 const MERCHANT_LOGIN_URL = 'https://merchant.paynix.co.in/auth/login';
 const MERCHANT_DASHBOARD_URL = 'https://merchant.paynix.co.in/dashboard';
@@ -25,7 +26,7 @@ const OUTPUT_JSON = path.join('./website', 'paynix-wallet-log-results.json');
 const SNAPSHOT_FILE = path.join('./data', 'paynix-wallet-log-snapshot.json');
 const TOP_N = 5;
 
-const { PAYNIX_HEADFUL, GOOGLE_DRIVE_PAYNIX_WALLETLOG_FILE_ID, GOOGLE_DRIVE_API_KEY } = process.env;
+const { PAYNIX_HEADFUL, GOOGLE_DRIVE_PAYNIX_WALLETLOG_FILE_ID, GOOGLE_DRIVE_PAYNIX_FILE_ID, GOOGLE_DRIVE_API_KEY } = process.env;
 const headless = PAYNIX_HEADFUL !== 'true';
 
 function parseINR(s) {
@@ -103,7 +104,16 @@ async function run() {
     console.log('No data/paynix-merchant-logins.json found, skipping merchant wallet scrape.');
     return;
   }
-  const logins = JSON.parse(fs.readFileSync(LOGINS_FILE, 'utf-8'));
+  const allLogins = JSON.parse(fs.readFileSync(LOGINS_FILE, 'utf-8'));
+
+  // Suspended accounts can never log in — skip them entirely, no attempt,
+  // no failure record, no alert. See lib/suspended-merchants.js.
+  const suspendedIds = await getSuspendedMerchantIds(GOOGLE_DRIVE_PAYNIX_FILE_ID, GOOGLE_DRIVE_API_KEY);
+  const suspendedLogins = allLogins.filter((l) => suspendedIds.has(l.merchantId));
+  const logins = allLogins.filter((l) => !suspendedIds.has(l.merchantId));
+  if (suspendedLogins.length) {
+    console.log(`Skipping ${suspendedLogins.length} suspended merchant(s): ${suspendedLogins.map((l) => l.merchantName).join(', ')}`);
+  }
 
   const previousResults = await fetchPreviousFromDrive(GOOGLE_DRIVE_PAYNIX_WALLETLOG_FILE_ID, GOOGLE_DRIVE_API_KEY);
   const previousWalletLogs = previousResults?.walletLogs || {};
