@@ -174,7 +174,25 @@ async function run() {
         walletLogs[login.merchantId] = prevEntries;
         newLoadRequests[login.merchantId] = [];
       } else {
-        walletLogs[login.merchantId] = entries;
+        // Partial-read guard, added 2026-08-11 after VELCYNTRA's
+        // LR_22C9D8FCDC74 (₹3,00,000) silently dropped off two
+        // consecutive CI scrapes in a row despite the DOM table reading
+        // correctly and consistently (5/5 attempts) when checked
+        // manually moments later — a CI-environment-only partial read
+        // (1 of 2 rows) that the 0-row guard above doesn't catch, since
+        // it only fires on a *total* empty read. Load requests are
+        // never deleted on Paynix's side (see comment on
+        // computeNewOrChangedLoadRequests), so any previously-seen
+        // requestId missing from this run's read is scrape loss, not a
+        // real disappearance — merge it back in rather than silently
+        // dropping it and re-alerting it as "new" on some later run
+        // that happens to catch it again.
+        const entryIds = new Set(entries.map((e) => e.requestId));
+        const recovered = (prevEntries || []).filter((e) => e.requestId && !entryIds.has(e.requestId));
+        if (recovered.length > 0) {
+          console.warn(`  ${recovered.length} previously-seen load request(s) for ${login.merchantName} missing from this scrape (${recovered.map((e) => e.requestId).join(', ')}) — merging back in as a partial-read guard.`);
+        }
+        walletLogs[login.merchantId] = [...entries, ...recovered];
         const changed = computeNewOrChangedLoadRequests(prevEntries, entries);
         // Embed merchantName directly on each alert-worthy entry so
         // telegram-alert.js doesn't need to cross-reference the separate
