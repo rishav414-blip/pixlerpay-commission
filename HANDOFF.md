@@ -1,7 +1,7 @@
 
 # Handoff — PixlerPay / Paynix Commission Dashboard
 
-Last updated: 2026-08-11 (Paynix reseller-portal OTP fix confirmed stable via health-check; 3 new/ongoing issues found while checking health-check alerts — see below)
+Last updated: 2026-08-11 (session persistence + login-failure backoff/critical-alert for merchant-portal logins; suspended-merchant misdiagnosis corrected; PixlerPay-side tracking removed from refresh.yml — this pipeline now concentrates on Paynix only; health-check Telegram now CRITICAL-only — see "Session persistence, login-failure alerting, and Paynix-only refocus" below)
 
 ## What this project is
 
@@ -46,10 +46,13 @@ Two scheduled workflows, both using GitHub-hosted runners (free/unlimited
 minutes since this repo is public):
 
 - **`.github/workflows/refresh.yml`** — every 30 min (`*/30 * * * *`) +
-  manual "Run workflow" button. Runs the full pipeline: all 18 PixlerPay
-  accounts, Paynix reseller + 9 merchant wallet logs, PixlerPay's own
-  merchant account (full payout export), uploads everything to Drive, then
-  runs the Telegram alert step. Takes ~5-10 min.
+  manual "Run workflow" button. **Correction, 2026-08-11**: no longer runs
+  the 18 PixlerPay accounts — that scrape+calc was removed per explicit
+  request, see "Session persistence, login-failure alerting, and
+  Paynix-only refocus" below (point 6). Currently runs: Paynix reseller +
+  merchant wallet-log/report scrapes, PixlerPay's own Paynix merchant
+  account (full payout export), uploads everything to Drive, then runs the
+  Telegram alert step. Takes ~5-10 min.
   **Added 2026-07-13**: now also exports full payout history from the same
   9 Paynix merchant portals (`download-paynix-merchant-reports`, for the
   margin+AK commission calc) — some of these accounts have thousands of
@@ -639,6 +642,168 @@ confirming it was the priority for this pass. Also noted in passing: a
 "PixlerPay merchant wallet-balance check") appeared in this repo's working
 tree from what looks like a different concurrent session — left untouched
 and not claimed as this session's work.
+
+## Session persistence, login-failure alerting, and Paynix-only refocus, 2026-08-11
+
+Follow-on session, same day as the "Health-check follow-up" entry above.
+Started from a user report: a Telegram alert re-surfaced two ~3-week-old
+Emervex wallet top-ups as "new" (fixed, see below), then a real user
+screenshot of a Pending VYSHIKAX top-up that had generated **no** alert at
+all. Root-caused both, then generalized the fixes and did a broader
+failure-isolation pass per explicit request ("find a way to avoid effect
+of one failure of process on the other functions wherever possible").
+
+**1. Empty-read race → repeated false wallet-top-up alerts (Emervex).**
+`download-paynix-merchant-wallets.js` read the Load Requests table after
+only a fixed 2s wait, no check it had actually rendered. A slow render
+read 0 rows — not an exception, so no existing safeguard caught it — and
+that empty result got saved as the new "previous" baseline. Emervex only
+has 5 total load requests ever (its top-5 = full history), so losing them
+from the baseline meant the next successful scrape saw all 5 as "brand
+new" and re-alerted weeks-old entries. Fixed: wait for the table to render
+before reading, and never let a 0-row read overwrite a non-empty previous
+baseline (treat it as a likely timing hiccup instead). Same latent bug
+existed in `download-paynix.js`'s failed-payout/merchant-wallet-balance
+scraping (same fixed-wait-then-read pattern) — fixed there too, with a
+re-check-once-before-trusting-zero approach instead (unlike wallet
+top-ups, failed-payout counts can legitimately be zero for real).
+
+**2. VYSHIKAX's wallet-alert coverage had been silently broken for days —
+misdiagnosed twice before finding the real cause.** First theory (wrong):
+Paynix's OTP screen (see "Merchant-portal OTP step" section above) needed
+handling — it already was handled, correctly, by the existing shared
+login helper. Second theory (partially right, incompletely applied):
+`wallet-alert.yml`'s 5-minute cadence re-logs-in (thus re-requests a fresh
+OTP) for all 20 merchants on every single run; Paynix enforces a
+per-account OTP cooldown (~15 min, confirmed by its own error text), so
+any account actually requiring OTP was structurally guaranteed to keep
+tripping that cooldown before it could clear. **Real fix, in two parts:**
+
+- **Session persistence** (`lib/paynix-merchant-login.js`'s
+  `getAuthenticatedContext`): logs in once, saves the session (cookies +
+  localStorage/access token) via Playwright's `storageState`, and reuses
+  it on later runs instead of logging in fresh each time — only falling
+  back to a real login+OTP when the restored session is actually expired
+  (detected by landing back on `/auth/login`). Wired into all four scripts
+  that authenticate against `merchant.paynix.co.in` or
+  `reseller.paynix.co.in` (wallets, merchant-reports, PixlerPay's own
+  merchant account, and the reseller portal). CI persistence via
+  `actions/cache` in both `refresh.yml` and `wallet-alert.yml`, keyed
+  `paynix-sessions-${{ github.run_id }}` with `restore-keys:
+  paynix-sessions-` (so a cache entry always saves at the end — a fixed
+  key only ever saves once, on the first miss) — **shared** across both
+  workflows since a session either establishes for a merchant is reusable
+  by the other (same origin).
+- **Login-failure backoff**, added after confirming session persistence
+  alone wasn't enough (a merchant that fails once used to just get retried
+  5-15 min later — re-hitting the same cooldown before it could clear,
+  compounding the outage instead of giving it room to recover): a failed
+  login is now skipped outright (no context created, no OTP requested) for
+  20 minutes before retrying. The failure-state file rides in the same
+  cached directory as the session file (`<merchantId>.failure.json`
+  next to `<merchantId>.json`), so no extra CI plumbing was needed.
+
+VYSHIKAX confirmed recovered live once its OTP cooldown (mostly self-
+inflicted by manual diagnostic re-testing during this session) cleared —
+its real top-up data, including the exact entry from the user's
+screenshot, matched what showed up in the merchant portal.
+
+**Two regressions caught and fixed before they ever reached CI**, both
+while wiring the above into the two per-merchant-loop scripts (wallets,
+merchant-reports): (a) `getAuthenticatedContext` was being called
+*outside* the per-merchant `try/catch` — a single merchant's login
+failure crashed the entire script instead of falling through to the
+existing preserve-previous-baseline handling (verified live before
+fixing: Emervex's very first fresh login threw and killed the whole run).
+(b) `getAuthenticatedContext` itself leaked the browser context it had
+just created if `performLogin` threw. Both fixed; the pattern (declare
+`context` outside `try`, but *create* it — including the login call —
+inside) is now the template for any future script wired into this helper.
+
+**3. Critical Telegram alert for unresolved login failures**, per explicit
+request. `telegram-alert.js` now scans for `*.failure.json` files with
+`alerted: false`, sends one consolidated "🚨 CRITICAL" message (separate
+from the regular top-up/failed-payout sections, sent unconditionally
+regardless of `TELEGRAM_ALERT_SECTIONS`), then marks them `alerted: true`
+so a merchant stuck in the 20-min backoff loop only alerts once per
+distinct outage, not every retry cycle. Verified live on its first real
+trigger.
+
+**4. Suspended-account misdiagnosis, again** — the critical alert above
+first fired for ANTARIKSHA, SUVIKA, and Bitnexy, which looked exactly like
+the OTP-cooldown pattern (identical error text). This is the *same*
+misdiagnosis already documented and fixed on 2026-08-10 (see the
+`pixlerpay-skip-suspended-merchants` memory) — these accounts are
+**suspended**, so login can never succeed no matter how much backoff is
+applied; that prior fix apparently hadn't been carried into this session's
+new scripts. Added `lib/suspended-merchants.js` (fetches the live
+reseller snapshot's `status` field — not a hardcoded list, since which
+merchants are suspended changes over time) and wired it into both
+`download-paynix-merchant-wallets.js` and
+`download-paynix-merchant-reports.js`: suspended merchantIds are filtered
+out *before* the loop even starts, so there's no login attempt, no
+failure record, and no alert for them at all — confirmed live
+("Skipping 3 suspended merchant(s): ...").
+
+**5. Failure-isolation pass across both workflows**, per explicit request.
+Found and fixed two real single-points-of-failure that don't match the
+pattern the rest of the pipeline already deliberately avoids:
+- `refresh.yml`'s "Download PixlerPay report" and "Calculate PixlerPay
+  commission" steps were the only scraping/calc steps without
+  `continue-on-error: true` — a total PixlerPay-side outage would have
+  stopped the whole job, blocking the entirely unrelated Paynix steps and
+  the upload/alert steps too. (Moot now — see point 6, these steps were
+  removed entirely a few hours later the same session.)
+- `wallet-alert.yml` chained all 4 of its npm scripts in one shell `run:
+  |` block with implicit `set -e` — an unexpected crash in the scrape
+  (anything past what its own internal try/catch covers) silently skipped
+  the Drive upload *and* the Telegram alert entirely, including the new
+  critical login-failure alert from point 3 (which would have defeated
+  its own purpose: the crash it exists to report could itself have
+  prevented it from sending). Split into 4 separate steps mirroring
+  `refresh.yml`'s existing `continue-on-error` / `if: !cancelled()`
+  pattern. Verified live.
+
+**6. `refresh.yml` no longer runs PixlerPay's own commission scrape+calc**
+(`download-report` / `calculate`, the 18-account direct PixlerPay
+business), per explicit request — this pipeline now concentrates on the
+Paynix system only. `website/commission-results.json` simply stops
+getting refreshed and stays frozen at whatever it last was;
+`upload-to-drive.js` still re-uploads that same file unchanged each run
+so nothing breaks, it just won't change anymore. Also dropped the
+now-dead `ACCOUNTS_JSON` secret write (only that removed step used it).
+**"Download PixlerPay merchant (Paynix) data" step is untouched** — that's
+PixlerPay's *own* Paynix merchant account (the "PixlerPay Merchant tab"
+described at the top of this file), part of the Paynix system being kept,
+not the 18-account PixlerPay portal being dropped. To bring the 18-account
+tracking back, restore the two removed steps (see git history around
+2026-08-11 for the exact block) plus the `ACCOUNTS_JSON` secret write.
+
+**7. `health-check.js` Telegram alerts now CRITICAL-only**, per explicit
+request — warnings (idle clients, rate-card drift, a single
+stale-but-not-broken source) still print in the CI run log but no longer
+trigger a Telegram message; a warnings-only run sends nothing. Caught a
+direct follow-on bug from point 6 while verifying this: since
+`commission-results.json` is now intentionally frozen, health-check's
+freshness check would have flagged it CRITICAL *forever* — exactly the
+kind of noise this change was meant to eliminate. Removed "PixlerPay
+commission" from the freshness-check source list entirely (along with its
+now-orphaned idle-clients/skipped-reports block); "PixlerPay Merchant"
+(the still-active Paynix-side one) is unaffected.
+
+**8. RASHEEYA TECHNOLOGY PRIVATE LIMITED** (`MER_1F18C5EDCA3B`) added to
+`ATMOON_MERCHANT_IDS` in `telegram-alert.js`, per explicit request — its
+wallet top-up alerts now route to the "Atmoon :: Paynix : Pixler" group
+instead of the default chat, same as the 9 merchants already there.
+
+**Net effect on the 3 open findings from the "Health-check follow-up"
+section above**: #1 (PixlerPay-side idle clients) is now moot — that
+whole department stopped being tracked in point 6. #2 (VELCYNTRA/RAAMIRO
+persistent "no data") and #3 (rate-card drift — now 3 clients: PARAKEET
+ENGINEERING, BABA ENTERPRISES, SURAJ WELLNESS) are both **still open**,
+confirmed still present in this session's own health-check verification
+runs — neither was investigated or fixed this session, still flagged for
+whoever picks this up next.
 
 ## Master reconciliation sheet spot-check, 2026-08-10
 
