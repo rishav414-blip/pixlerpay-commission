@@ -105,12 +105,22 @@ jobs:
       # without stopping the job; upload-to-drive/telegram-alert then run
       # with whatever data did make it to disk (their own existsSync
       # guards already skip any file that's missing).
+      # continue-on-error added 2026-08-11 to these two as well — they were
+      # the only scraping/calc steps in this job without it, meaning a
+      # total PixlerPay-side outage (all 18 accounts failing, or a bad
+      # report tripping up calculate-commission.js) would have stopped the
+      # job outright, blocking the entirely-unrelated Paynix steps below
+      # (and the upload/alert steps) from ever running — exactly the kind
+      # of one-failure-takes-down-everything-else gap the rest of this job
+      # was already deliberately split up to avoid (see the comment below).
       - name: Download PixlerPay report
         env:
           PIXLERPAY_HEADFUL: 'false'
+        continue-on-error: true
         run: npm run download-report
 
       - name: Calculate PixlerPay commission
+        continue-on-error: true
         run: npm run calculate
 
       - name: Download Paynix reseller data

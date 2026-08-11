@@ -111,7 +111,14 @@ async function run() {
         sessionFile,
         dashboardUrl: MERCHANT_DASHBOARD_URL,
         performLogin: (p) => loginPaynixMerchant(p, MERCHANT_LOGIN_URL, login.username, login.password),
+        merchantLabel: login.merchantName,
       });
+      if (authed.skipped) {
+        // Backing off after a recent login failure — nothing to fetch this
+        // cycle, existing report.json (if any) stays as the last known data.
+        console.warn(`  Skipped ${login.merchantName} (backing off after recent failure).`);
+        continue;
+      }
       context = authed.context;
       const page = authed.page;
       console.log(`Logging into ${login.merchantName} (${login.merchantId})${authed.reused ? ' (reused session)' : ''}...`);

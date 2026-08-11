@@ -26,6 +26,13 @@ const PAYNIX_RESULTS_FILE = path.join('./website', 'paynix-results.json');
 // file to race on.
 const PAYNIX_WALLETLOG_RESULTS_FILE = path.join('./website', 'paynix-wallet-log-results.json');
 const PIXLERPAY_MERCHANT_RESULTS_FILE = path.join('./website', 'pixlerpay-merchant-results.json');
+// Written by lib/paynix-merchant-login.js's getAuthenticatedContext() on a
+// login failure (see there for the backoff mechanism). Checked
+// unconditionally below, regardless of TELEGRAM_ALERT_SECTIONS — both
+// refresh.yml and wallet-alert.yml run this script in the same job right
+// after the scrape that would have written these files, so they're always
+// on local disk to read directly (no Drive round-trip needed).
+const SESSIONS_DIR = path.join('./data', 'paynix-sessions');
 
 // Which Paynix sections this invocation should alert on. wallet-alert.yml
 // (every 10 min) sets this to "topups" only; refresh.yml (every 30 min)
@@ -140,11 +147,48 @@ function buildPixlerMerchantMessage(d) {
   return lines.join('\n');
 }
 
+// Sent as its own message, separate from the messages[] batch below, so a
+// failure to mark a failure-state file `alerted` can't get tangled up with
+// (or silently dropped by) the rest of the run. Only marks `alerted: true`
+// after the send actually succeeds — if Telegram itself is down, the next
+// run's retry will resend rather than the alert being lost.
+async function sendLoginFailureAlertsIfAny() {
+  if (!fs.existsSync(SESSIONS_DIR)) return;
+  const toAlert = [];
+  for (const f of fs.readdirSync(SESSIONS_DIR)) {
+    if (!f.endsWith('.failure.json')) continue;
+    const full = path.join(SESSIONS_DIR, f);
+    try {
+      const state = JSON.parse(fs.readFileSync(full, 'utf-8'));
+      if (!state.alerted) toAlert.push({ file: full, state });
+    } catch {
+      // Corrupt/unreadable failure-state file — skip it rather than crash
+      // the whole telegram-alert run over it.
+    }
+  }
+  if (toAlert.length === 0) return;
+
+  const lines = [`🚨 <b>CRITICAL: Paynix login failure(s)</b>`];
+  for (const { state } of toAlert) {
+    const err = (state.lastErrorMessage || 'unknown error').slice(0, 150);
+    lines.push(`  • <b>${state.merchantLabel || 'unknown account'}</b> — ${state.consecutiveFailures}x failed — ${err}`);
+  }
+  lines.push('\nAutomation is backing off ~20 min per account before retrying — no action needed unless this persists across several cycles.');
+
+  await sendTelegramMessage(lines.join('\n'), TELEGRAM_CHAT_ID);
+  for (const { file, state } of toAlert) {
+    fs.writeFileSync(file, JSON.stringify({ ...state, alerted: true }, null, 2));
+  }
+  console.log(`Sent critical login-failure alert for ${toAlert.length} account(s).`);
+}
+
 async function run() {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
     console.log('TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set — skipping Telegram alert (not configured yet).');
     return;
   }
+
+  await sendLoginFailureAlertsIfAny();
 
   const messages = []; // { text, chatId }
 

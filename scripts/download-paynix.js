@@ -252,7 +252,7 @@ async function run() {
   // timestamps on Paynix's dashboard follow the browser's local timezone,
   // which defaults to UTC on GitHub Actions runners and silently shifts
   // scraped times 5.5 hours off from real IST.
-  const { context, page, reused } = await getAuthenticatedContext(browser, {
+  const { context, page, reused, skipped } = await getAuthenticatedContext(browser, {
     sessionFile: SESSION_FILE,
     dashboardUrl: RESELLER_DASHBOARD_URL,
     contextOptions: { timezoneId: 'Asia/Kolkata' },
@@ -260,7 +260,15 @@ async function run() {
       await gotoWithRetry(p, PAYNIX_LOGIN_URL, { waitUntil: 'domcontentloaded' });
       await completePaynixLogin(p, PAYNIX_USERNAME, PAYNIX_PASSWORD);
     },
+    merchantLabel: 'Paynix reseller portal',
   });
+
+  if (skipped) {
+    // Backing off after a recent login failure — deliberate, not an error.
+    console.log('Skipping this run (backing off after a recent login failure) — leaving existing data as-is.');
+    await browser.close();
+    return;
+  }
 
   console.log(`Logging into Paynix reseller portal${reused ? ' (reused session)' : ''}...`);
 

@@ -103,7 +103,33 @@ jobs:
       # payouts too, which "consumed" newly-failed payouts before
       # refresh.yml's failed-only alert ever saw them as new. Now this
       # workflow only ever touches wallet top-up data.
-      - name: Scrape Paynix wallet top-ups + alert on new/changed requests
+      #
+      # Split into 4 separate steps 2026-08-11 (was: all four npm scripts
+      # chained in one `run: |` block) — GitHub Actions runs each step's
+      # shell with `-e`, so the first command's non-zero exit skipped every
+      # command after it in the same block. That meant an unexpected crash
+      # in the scrape (anything past what its own internal try/catch
+      # covers) silently skipped the Drive upload *and* the Telegram alert
+      # entirely — including the critical login-failure alert added the
+      # same day, which would defeat its own purpose if the very crash it's
+      # meant to report also prevented it from sending. Mirrors refresh.yml's
+      # existing continue-on-error / `if: !cancelled()` pattern.
+      - name: Scrape Paynix wallet top-ups
+        env:
+          PAYNIX_HEADFUL: 'false'
+        continue-on-error: true
+        run: npm run download-paynix-wallets
+
+      - name: Filter Paynix data for Atmoon page
+        continue-on-error: true
+        run: npm run filter-paynix-atmoon
+
+      - name: Upload results to Drive
+        if: ${{ !cancelled() }}
+        run: npm run upload-to-drive
+
+      - name: Send Telegram alert
+        if: ${{ !cancelled() }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -111,10 +137,5 @@ jobs:
           # default chat above — see ATMOON_MERCHANT_IDS in
           # telegram-alert.js. Added 2026-08-07.
           TELEGRAM_ATMOON_CHAT_ID: ${{ secrets.TELEGRAM_ATMOON_CHAT_ID }}
-          PAYNIX_HEADFUL: 'false'
           TELEGRAM_ALERT_SECTIONS: 'topups'
-        run: |
-          npm run download-paynix-wallets
-          npm run filter-paynix-atmoon
-          npm run upload-to-drive
-          npm run telegram-alert
+        run: npm run telegram-alert

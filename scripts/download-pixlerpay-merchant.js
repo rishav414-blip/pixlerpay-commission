@@ -178,12 +178,23 @@ async function run() {
   // "Created" column is rendered client-side in the browser's local
   // timezone, which defaults to UTC on GitHub Actions runners and
   // silently shifts scraped times 5.5 hours off from real IST.
-  const { context, page, reused } = await getAuthenticatedContext(browser, {
+  const { context, page, reused, skipped } = await getAuthenticatedContext(browser, {
     sessionFile: SESSION_FILE,
     dashboardUrl: PIXLERPAY_MERCHANT_DASHBOARD_URL,
     contextOptions: { timezoneId: 'Asia/Kolkata' },
     performLogin: (p) => loginPaynixMerchant(p, PIXLERPAY_MERCHANT_LOGIN_URL, PIXLERPAY_MERCHANT_USERNAME, PIXLERPAY_MERCHANT_PASSWORD),
+    merchantLabel: 'PixlerPay Paynix merchant account',
   });
+
+  if (skipped) {
+    // Backing off after a recent login failure — deliberate, not an error:
+    // exit cleanly and leave the last-published website/*.json as-is
+    // rather than crashing (the old behavior for a login failure, which
+    // would misreport a deliberate skip as this run's own failure).
+    console.log('Skipping this run (backing off after a recent login failure) — leaving existing data as-is.');
+    await browser.close();
+    return;
+  }
 
   console.log(`Logging into PixlerPay Paynix merchant account${reused ? ' (reused session)' : ''}...`);
 

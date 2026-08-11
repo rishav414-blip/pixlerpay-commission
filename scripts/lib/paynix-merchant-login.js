@@ -62,12 +62,53 @@ import path from 'node:path';
 // CI persistence: the caller's workflow is responsible for caching the
 // sessionFile's directory (actions/cache) across runs, since each run is a
 // fresh checkout with no memory of the last one otherwise.
+//
+// Login-failure backoff + tracking, added 2026-08-11 per explicit request
+// after the VYSHIKAX incident: a failed login used to just get retried on
+// the very next run (5-15 min later depending on the workflow), which for
+// an OTP-cooldown failure means hitting the SAME cooldown again before it
+// clears — compounding the outage instead of giving it room to recover.
+// Now: a fresh login attempt after a recent failure is skipped outright
+// (no context created, no OTP requested) until BACKOFF_MS has elapsed —
+// comfortably longer than Paynix's observed ~15-minute OTP cooldown. The
+// failure state file rides in the same directory as the session file, so
+// it's covered by the same CI cache with no extra plumbing. Callers that
+// get `{ skipped: true }` back should treat it exactly like a caught
+// failure (preserve last-known-good data, no context/page to use) but
+// without attempting anything.
+const LOGIN_BACKOFF_MS = 20 * 60 * 1000;
+
+function failureStateFileFor(sessionFile) {
+  return sessionFile ? sessionFile.replace(/\.json$/, '.failure.json') : null;
+}
+
+function readFailureState(failureStateFile) {
+  if (!failureStateFile || !fs.existsSync(failureStateFile)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(failureStateFile, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
 export async function getAuthenticatedContext(browser, {
   sessionFile,
   dashboardUrl,
   contextOptions = {},
   performLogin, // async (page) => void — must leave page authenticated on return
+  merchantLabel = 'account', // for the skip log line only
 }) {
+  const failureStateFile = failureStateFileFor(sessionFile);
+  const priorFailure = readFailureState(failureStateFile);
+  if (priorFailure) {
+    const elapsed = Date.now() - new Date(priorFailure.lastAttemptAt).getTime();
+    if (elapsed < LOGIN_BACKOFF_MS) {
+      const remainingMin = Math.ceil((LOGIN_BACKOFF_MS - elapsed) / 60000);
+      console.warn(`  Skipping login for ${merchantLabel} — failed ${Math.round(elapsed / 60000)} min ago (${priorFailure.lastErrorMessage.slice(0, 80)}...), backing off ${remainingMin} more min before retrying.`);
+      return { context: null, page: null, reused: false, skipped: true, priorFailure };
+    }
+  }
+
   if (sessionFile && fs.existsSync(sessionFile)) {
     try {
       const context = await browser.newContext({ storageState: sessionFile, ...contextOptions });
@@ -92,8 +133,25 @@ export async function getAuthenticatedContext(browser, {
     // handles the error itself (e.g. falling back to a preserved baseline),
     // but it never gets a context reference to close in that case.
     await context.close();
+    if (failureStateFile) {
+      fs.mkdirSync(path.dirname(failureStateFile), { recursive: true });
+      fs.writeFileSync(failureStateFile, JSON.stringify({
+        merchantLabel,
+        lastAttemptAt: new Date().toISOString(),
+        lastErrorMessage: err.message,
+        consecutiveFailures: (priorFailure?.consecutiveFailures || 0) + 1,
+        // telegram-alert.js flips this to true after sending the critical
+        // alert, so a merchant stuck failing across several backed-off
+        // retries only alerts once per distinct outage, not every cycle.
+        alerted: false,
+      }, null, 2));
+    }
     throw err;
   }
+  // Successful login clears any prior failure record — this run's success
+  // ends that outage, and a future failure should alert fresh, not be
+  // treated as a continuation of the old one.
+  if (failureStateFile && fs.existsSync(failureStateFile)) fs.unlinkSync(failureStateFile);
   if (sessionFile) {
     fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
     await context.storageState({ path: sessionFile });

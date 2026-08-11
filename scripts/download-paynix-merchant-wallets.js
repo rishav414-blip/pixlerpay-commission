@@ -137,7 +137,15 @@ async function run() {
         dashboardUrl: MERCHANT_DASHBOARD_URL,
         contextOptions: { timezoneId: 'Asia/Kolkata' },
         performLogin: (p) => loginPaynixMerchant(p, MERCHANT_LOGIN_URL, login.username, login.password),
+        merchantLabel: login.merchantName,
       });
+      if (authed.skipped) {
+        // Backing off after a recent login failure — preserve last-known
+        // data without attempting anything (no context/page exist here).
+        walletLogs[login.merchantId] = previousWalletLogs[login.merchantId] || [];
+        newLoadRequests[login.merchantId] = [];
+        continue;
+      }
       context = authed.context;
       const page = authed.page;
       console.log(`Scraping wallet log for ${login.merchantName}${authed.reused ? ' (reused session)' : ' (fresh login)'}...`);
