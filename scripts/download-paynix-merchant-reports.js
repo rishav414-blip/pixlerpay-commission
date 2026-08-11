@@ -26,9 +26,15 @@ import 'dotenv/config';
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
-import { loginPaynixMerchant } from './lib/paynix-merchant-login.js';
+import { loginPaynixMerchant, getAuthenticatedContext } from './lib/paynix-merchant-login.js';
 
 const MERCHANT_LOGIN_URL = 'https://merchant.paynix.co.in/auth/login';
+const MERCHANT_DASHBOARD_URL = 'https://merchant.paynix.co.in/dashboard';
+// Same directory/keying as download-paynix-merchant-wallets.js — a session
+// established by either script for a given merchant is reusable by the
+// other, since both authenticate against the same merchant.paynix.co.in
+// origin. See lib/paynix-merchant-login.js for why this exists.
+const SESSIONS_DIR = path.join('./data', 'paynix-sessions');
 const LOGINS_FILE = path.join('./data', 'paynix-merchant-logins.json');
 const REPORTS_DIR = path.join('./data', 'paynix-merchant-reports');
 
@@ -93,14 +99,27 @@ async function run() {
   const browser = await chromium.launch({ headless });
   let successCount = 0;
   for (const login of logins) {
-    const context = await browser.newContext();
-    const page = await context.newPage();
+    // context declared outside try, but *creation* (including performLogin,
+    // which can throw on a login failure) happens inside — a login failure
+    // for one merchant must fall through to the existing per-merchant catch
+    // below, not crash the whole run. See download-paynix-merchant-wallets.js
+    // for the regression this mirrors and was caught against.
+    let context;
     try {
-      console.log(`Logging into ${login.merchantName} (${login.merchantId})...`);
-      await loginPaynixMerchant(page, MERCHANT_LOGIN_URL, login.username, login.password);
+      const sessionFile = path.join(SESSIONS_DIR, `${login.merchantId}.json`);
+      const authed = await getAuthenticatedContext(browser, {
+        sessionFile,
+        dashboardUrl: MERCHANT_DASHBOARD_URL,
+        performLogin: (p) => loginPaynixMerchant(p, MERCHANT_LOGIN_URL, login.username, login.password),
+      });
+      context = authed.context;
+      const page = authed.page;
+      console.log(`Logging into ${login.merchantName} (${login.merchantId})${authed.reused ? ' (reused session)' : ''}...`);
       // Need to be on a page under the app's origin for localStorage
-      // (holding the access token) to be readable by page.evaluate.
-      await page.goto('https://merchant.paynix.co.in/dashboard', { waitUntil: 'domcontentloaded' });
+      // (holding the access token) to be readable by page.evaluate — the
+      // dashboard nav already happened inside getAuthenticatedContext
+      // (either for the freshly-authenticated page or to verify the
+      // restored session), so this is just the settle wait.
       await page.waitForTimeout(1500);
 
       const result = await fetchRecentPayouts(page, fromDate, toDate);
@@ -123,7 +142,7 @@ async function run() {
     } catch (err) {
       console.warn(`  FAILED for ${login.merchantName}: ${err.message}`);
     } finally {
-      await context.close();
+      if (context) await context.close();
     }
   }
   await browser.close();

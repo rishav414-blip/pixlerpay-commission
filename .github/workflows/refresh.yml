@@ -64,6 +64,19 @@ jobs:
       - name: Install xvfb
         run: sudo apt-get update && sudo apt-get install -y xvfb
 
+      # Same session cache as wallet-alert.yml (see its comment) — shared
+      # keying (data/paynix-sessions/<merchantId>.json) means a session
+      # either workflow establishes for a merchant is reusable by the
+      # other, since both authenticate against the same merchant.paynix.co.in
+      # origin. Cuts login/OTP attempts further by sharing across both
+      # workflows' schedules instead of each maintaining its own.
+      - name: Restore Paynix merchant sessions
+        uses: actions/cache@v4
+        with:
+          path: data/paynix-sessions
+          key: paynix-sessions-${{ github.run_id }}
+          restore-keys: paynix-sessions-
+
       - name: Write credential files from secrets
         env:
           ENV_FILE: ${{ secrets.ENV_FILE }}

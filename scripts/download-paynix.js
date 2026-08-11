@@ -3,7 +3,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fetchPreviousFromDrive } from './lib/drive-fetch.js';
-import { completePaynixLogin } from './lib/paynix-merchant-login.js';
+import { completePaynixLogin, getAuthenticatedContext } from './lib/paynix-merchant-login.js';
 
 const {
   PAYNIX_LOGIN_URL = 'https://reseller.paynix.co.in/auth/login',
@@ -20,6 +20,10 @@ if (!PAYNIX_USERNAME || !PAYNIX_PASSWORD) {
 }
 
 const DATA_DIR = './data';
+const RESELLER_DASHBOARD_URL = 'https://reseller.paynix.co.in/dashboard';
+// Different origin from the merchant-portal scripts' sessions dir (this is
+// the reseller account, not a per-merchant login), so its own file.
+const SESSION_FILE = path.join(DATA_DIR, 'paynix-sessions', 'reseller.json');
 const SNAPSHOT_FILE = path.join(DATA_DIR, 'paynix-snapshot.json');
 const PREV_SNAPSHOT_FILE = path.join(DATA_DIR, 'paynix-snapshot-previous.json');
 const OUTPUT_JSON = path.join('./website', 'paynix-results.json');
@@ -248,12 +252,17 @@ async function run() {
   // timestamps on Paynix's dashboard follow the browser's local timezone,
   // which defaults to UTC on GitHub Actions runners and silently shifts
   // scraped times 5.5 hours off from real IST.
-  const context = await browser.newContext({ timezoneId: 'Asia/Kolkata' });
-  const page = await context.newPage();
+  const { context, page, reused } = await getAuthenticatedContext(browser, {
+    sessionFile: SESSION_FILE,
+    dashboardUrl: RESELLER_DASHBOARD_URL,
+    contextOptions: { timezoneId: 'Asia/Kolkata' },
+    performLogin: async (p) => {
+      await gotoWithRetry(p, PAYNIX_LOGIN_URL, { waitUntil: 'domcontentloaded' });
+      await completePaynixLogin(p, PAYNIX_USERNAME, PAYNIX_PASSWORD);
+    },
+  });
 
-  console.log('Logging into Paynix reseller portal...');
-  await gotoWithRetry(page, PAYNIX_LOGIN_URL, { waitUntil: 'domcontentloaded' });
-  await completePaynixLogin(page, PAYNIX_USERNAME, PAYNIX_PASSWORD);
+  console.log(`Logging into Paynix reseller portal${reused ? ' (reused session)' : ''}...`);
 
   console.log('Scraping dashboard summary...');
   const summary = await scrapeDashboardSummary(page);

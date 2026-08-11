@@ -61,6 +61,24 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: npx playwright install-deps chromium
 
+      # Persists logged-in Paynix merchant-portal sessions (data/paynix-sessions/,
+      # see lib/paynix-merchant-login.js) across runs so this job doesn't have
+      # to log in — and re-request an OTP — from scratch every 5 minutes.
+      # Paynix's own OTP request has a per-account cooldown; re-logging-in
+      # every run for every merchant was tripping it for any account that
+      # actually requires OTP, permanently breaking their wallet-alert
+      # coverage (confirmed 2026-08-11: VYSHIKAX's top-up alerts had gone
+      # silently stale for days this way). Key includes run_id so a cache
+      # entry is always saved at the end (restore-keys falls back to the
+      # most recent one) — a fixed key would only ever save once, on the
+      # first-ever miss, and never pick up freshly-refreshed sessions.
+      - name: Restore Paynix merchant sessions
+        uses: actions/cache@v4
+        with:
+          path: data/paynix-sessions
+          key: paynix-sessions-${{ github.run_id }}
+          restore-keys: paynix-sessions-
+
       - name: Write credential files from secrets
         env:
           ENV_FILE: ${{ secrets.ENV_FILE }}

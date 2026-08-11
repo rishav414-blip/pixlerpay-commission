@@ -4,7 +4,7 @@ import xlsx from 'xlsx';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fetchPreviousFromDrive } from './lib/drive-fetch.js';
-import { loginPaynixMerchant } from './lib/paynix-merchant-login.js';
+import { loginPaynixMerchant, getAuthenticatedContext } from './lib/paynix-merchant-login.js';
 
 const {
   PIXLERPAY_MERCHANT_LOGIN_URL = 'https://merchant.paynix.co.in/auth/login',
@@ -21,6 +21,11 @@ if (!PIXLERPAY_MERCHANT_USERNAME || !PIXLERPAY_MERCHANT_PASSWORD) {
 }
 
 const DATA_DIR = './data';
+const PIXLERPAY_MERCHANT_DASHBOARD_URL = 'https://merchant.paynix.co.in/dashboard';
+// Own session file — PixlerPay's own account, not one of the per-merchant
+// logins in paynix-merchant-logins.json, so it doesn't share the sessions
+// dir keying used by the other two merchant-portal scripts.
+const SESSION_FILE = path.join(DATA_DIR, 'paynix-sessions', 'pixlerpay-own-account.json');
 const SNAPSHOT_FILE = path.join(DATA_DIR, 'pixlerpay-merchant-snapshot.json');
 const OUTPUT_JSON = path.join('./website', 'pixlerpay-merchant-results.json');
 const TOP_N_WALLET_LOG = 5;
@@ -173,11 +178,14 @@ async function run() {
   // "Created" column is rendered client-side in the browser's local
   // timezone, which defaults to UTC on GitHub Actions runners and
   // silently shifts scraped times 5.5 hours off from real IST.
-  const context = await browser.newContext({ timezoneId: 'Asia/Kolkata' });
-  const page = await context.newPage();
+  const { context, page, reused } = await getAuthenticatedContext(browser, {
+    sessionFile: SESSION_FILE,
+    dashboardUrl: PIXLERPAY_MERCHANT_DASHBOARD_URL,
+    contextOptions: { timezoneId: 'Asia/Kolkata' },
+    performLogin: (p) => loginPaynixMerchant(p, PIXLERPAY_MERCHANT_LOGIN_URL, PIXLERPAY_MERCHANT_USERNAME, PIXLERPAY_MERCHANT_PASSWORD),
+  });
 
-  console.log('Logging into PixlerPay Paynix merchant account...');
-  await loginPaynixMerchant(page, PIXLERPAY_MERCHANT_LOGIN_URL, PIXLERPAY_MERCHANT_USERNAME, PIXLERPAY_MERCHANT_PASSWORD);
+  console.log(`Logging into PixlerPay Paynix merchant account${reused ? ' (reused session)' : ''}...`);
 
   console.log('Scraping wallet balance...');
   const walletBalance = await scrapeWalletBalance(page);

@@ -3,9 +3,11 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fetchPreviousFromDrive } from './lib/drive-fetch.js';
-import { loginPaynixMerchant } from './lib/paynix-merchant-login.js';
+import { loginPaynixMerchant, getAuthenticatedContext } from './lib/paynix-merchant-login.js';
 
 const MERCHANT_LOGIN_URL = 'https://merchant.paynix.co.in/auth/login';
+const MERCHANT_DASHBOARD_URL = 'https://merchant.paynix.co.in/dashboard';
+const SESSIONS_DIR = path.join('./data', 'paynix-sessions');
 const LOGINS_FILE = path.join('./data', 'paynix-merchant-logins.json');
 // Own dedicated file, separate from website/paynix-results.json (the
 // reseller/failed-payout scrape owned exclusively by download-paynix.js).
@@ -33,9 +35,10 @@ function parseINR(s) {
   return isNaN(n) ? 0 : n;
 }
 
-async function scrapeWalletLog(page, login) {
-  await loginPaynixMerchant(page, MERCHANT_LOGIN_URL, login.username, login.password);
-
+// Assumes the page's context is already authenticated (see
+// getAuthenticatedContext in run() below, which handles login + session
+// reuse before calling this).
+async function scrapeWalletLog(page) {
   await page.goto('https://merchant.paynix.co.in/dashboard/wallet', { waitUntil: 'domcontentloaded' });
 
   // The page has two tables — "Load Requests" (wallet top-ups: REQUEST ID,
@@ -118,11 +121,27 @@ async function run() {
     // the DOM-scraped text against the raw UTC created_at from Paynix's
     // own /wallet/load-requests API). Pin the timezone explicitly so
     // scrapes are correct regardless of runner OS timezone.
-    const context = await browser.newContext({ timezoneId: 'Asia/Kolkata' });
-    const page = await context.newPage();
+    // Declared outside the try so the finally block can close it — but
+    // creation itself (including performLogin, which can throw on a login
+    // failure) now happens *inside* the try, so one merchant's login
+    // failure falls through to the same preserve-previous-baseline catch
+    // below instead of crashing the whole run (a regression introduced and
+    // caught while wiring this up: getAuthenticatedContext used to be
+    // called before the try/catch, so an OTP/login failure for any single
+    // merchant took down the entire script instead of just skipping them).
+    let context;
     try {
-      console.log(`Scraping wallet log for ${login.merchantName}...`);
-      const entries = await scrapeWalletLog(page, login);
+      const sessionFile = path.join(SESSIONS_DIR, `${login.merchantId}.json`);
+      const authed = await getAuthenticatedContext(browser, {
+        sessionFile,
+        dashboardUrl: MERCHANT_DASHBOARD_URL,
+        contextOptions: { timezoneId: 'Asia/Kolkata' },
+        performLogin: (p) => loginPaynixMerchant(p, MERCHANT_LOGIN_URL, login.username, login.password),
+      });
+      context = authed.context;
+      const page = authed.page;
+      console.log(`Scraping wallet log for ${login.merchantName}${authed.reused ? ' (reused session)' : ' (fresh login)'}...`);
+      const entries = await scrapeWalletLog(page);
       const prevEntries = previousWalletLogs[login.merchantId];
       if (entries.length === 0 && prevEntries?.length > 0) {
         // A 0-row read when the previous run had real entries is far more
@@ -156,7 +175,7 @@ async function run() {
       walletLogs[login.merchantId] = previousWalletLogs[login.merchantId] || [];
       newLoadRequests[login.merchantId] = [];
     } finally {
-      await context.close();
+      if (context) await context.close();
     }
   }
   await browser.close();

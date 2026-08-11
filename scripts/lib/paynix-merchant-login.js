@@ -36,6 +36,71 @@
 // the fixed 3s guess, worse under CI network latency than in local
 // testing. Fixed by polling for the token to actually appear (up to 15s)
 // instead of guessing a fixed delay.
+import fs from 'node:fs';
+import path from 'node:path';
+
+// Session-reuse wrapper, added 2026-08-11 after diagnosing why VYSHIKAX's
+// wallet-top-up alerts had gone silently stale for days: wallet-alert.yml
+// dispatches every 5 minutes and re-logs-in fresh (thus re-requesting a new
+// OTP) for all 20 merchants on every single run. Paynix's own OTP request
+// has a per-account cooldown ("Too many OTP requests. Please try again in
+// 15 minutes.", see completePaynixLogin below) — any account that actually
+// requires the OTP step (not all do; some skip it on what's presumably a
+// recognized/trusted session) was structurally guaranteed to keep tripping
+// that cooldown under a 5-minute cadence, permanently failing to log in.
+// Manual one-off tests looked fine because they didn't hit the rate limit.
+//
+// Fix: persist the logged-in session (cookies + localStorage, i.e. the
+// access token) to disk via Playwright's storageState, and reuse it on the
+// next run instead of logging in again — only fall back to a fresh
+// login+OTP when the restored session turns out to be actually expired
+// (detected by landing back on /auth/login after navigating to the
+// dashboard with the restored state). This cuts login attempts — and OTP
+// requests — down to roughly once per session lifetime instead of once
+// per 5-minute run.
+//
+// CI persistence: the caller's workflow is responsible for caching the
+// sessionFile's directory (actions/cache) across runs, since each run is a
+// fresh checkout with no memory of the last one otherwise.
+export async function getAuthenticatedContext(browser, {
+  sessionFile,
+  dashboardUrl,
+  contextOptions = {},
+  performLogin, // async (page) => void — must leave page authenticated on return
+}) {
+  if (sessionFile && fs.existsSync(sessionFile)) {
+    try {
+      const context = await browser.newContext({ storageState: sessionFile, ...contextOptions });
+      const page = await context.newPage();
+      await page.goto(dashboardUrl, { waitUntil: 'domcontentloaded' });
+      if (!page.url().includes('/auth/login')) {
+        return { context, page, reused: true };
+      }
+      // Restored session is expired/invalid — fall through to a fresh login.
+      await context.close();
+    } catch {
+      // Corrupt/unreadable session file — ignore and do a fresh login below.
+    }
+  }
+
+  const context = await browser.newContext(contextOptions);
+  const page = await context.newPage();
+  try {
+    await performLogin(page);
+  } catch (err) {
+    // Don't leak the context if login fails — the caller's own try/catch
+    // handles the error itself (e.g. falling back to a preserved baseline),
+    // but it never gets a context reference to close in that case.
+    await context.close();
+    throw err;
+  }
+  if (sessionFile) {
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    await context.storageState({ path: sessionFile });
+  }
+  return { context, page, reused: false };
+}
+
 export async function loginPaynixMerchant(page, loginUrl, username, password) {
   await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
   await completePaynixLogin(page, username, password);

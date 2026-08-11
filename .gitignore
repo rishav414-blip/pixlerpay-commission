@@ -29,4 +29,6 @@ data/paynix-merchant-reports-range-*/
 data/reseller-ledger-*.json
 data/pixlerpay-telegram-previous.json
 data/_export-cache/
+data/paynix-sessions/
+wallet-check-results.json
 !data/.gitkeep
