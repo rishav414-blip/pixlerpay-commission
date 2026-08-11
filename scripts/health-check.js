@@ -28,7 +28,6 @@ import { fetchPreviousFromDrive } from './lib/drive-fetch.js';
 
 const {
   GOOGLE_DRIVE_API_KEY,
-  GOOGLE_DRIVE_RESULTS_FILE_ID,
   GOOGLE_DRIVE_PAYNIX_FILE_ID,
   GOOGLE_DRIVE_PIXLERPAY_MERCHANT_FILE_ID,
   GOOGLE_DRIVE_PAYNIX_COMMISSION_FILE_ID,
@@ -85,8 +84,16 @@ function fmtAge(ms) {
 }
 
 async function checkFreshnessAndData() {
+  // "PixlerPay commission" (the 18-account direct PixlerPay business,
+  // GOOGLE_DRIVE_RESULTS_FILE_ID) intentionally removed from freshness
+  // checking 2026-08-11 — refresh.yml no longer refreshes it per explicit
+  // request (this pipeline now concentrates on the Paynix system only),
+  // so it's *supposed* to stay frozen/stale from here on. Checking it
+  // would just have produced a permanent, unfixable CRITICAL alert for
+  // something working exactly as intended. "PixlerPay Merchant" below is
+  // unrelated — that's PixlerPay's own account on Paynix, still actively
+  // refreshed, part of the Paynix system being kept.
   const sources = [
-    { label: 'PixlerPay commission', fileId: GOOGLE_DRIVE_RESULTS_FILE_ID, tsField: 'generatedAt' },
     { label: 'Paynix reseller', fileId: GOOGLE_DRIVE_PAYNIX_FILE_ID, tsField: 'scrapedAt' },
     { label: 'PixlerPay Merchant', fileId: GOOGLE_DRIVE_PIXLERPAY_MERCHANT_FILE_ID, tsField: 'scrapedAt' },
     { label: 'Paynix commission', fileId: GOOGLE_DRIVE_PAYNIX_COMMISSION_FILE_ID, tsField: 'generatedAt' },
@@ -112,14 +119,6 @@ async function checkFreshnessAndData() {
 
     // Per-department data-completeness signals already computed by the
     // calculation scripts — surfaced here rather than re-derived.
-    if (src.label === 'PixlerPay commission') {
-      if (data.idleClients?.length) {
-        flag('WARNING', `PixlerPay: ${data.idleClients.length} idle client(s) this run: ${data.idleClients.join(', ')}.`);
-      }
-      if (data.skippedReports?.length) {
-        flag('WARNING', `PixlerPay: ${data.skippedReports.length} report(s) skipped (missing rate/columns): ${data.skippedReports.join(', ')}.`);
-      }
-    }
     if (src.label === 'Paynix commission') {
       const noData = (data.clients || []).filter((c) => !c.hasData);
       if (noData.length) {
