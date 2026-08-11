@@ -1,7 +1,7 @@
 
 # Handoff — PixlerPay / Paynix Commission Dashboard
 
-Last updated: 2026-08-10 (Paynix merchant-portal OTP step broke the pipeline, fixed; a Master reconciliation sheet spot-check of 14 payout IDs; and a new ad-hoc PixlerPay wallet-balance check script — see below)
+Last updated: 2026-08-11 (Paynix reseller-portal OTP fix confirmed stable via health-check; 3 new/ongoing issues found while checking health-check alerts — see below)
 
 ## What this project is
 
@@ -565,6 +565,80 @@ failed payouts) and wrote a freshly-timestamped `website/paynix-results.json`.
 `continue-on-error` steps' actual log output, not just the job's overall
 green/red status — a step can silently produce nothing while the job
 still reports success.
+
+## Health-check follow-up, 2026-08-11: reseller-OTP fix confirmed + 3 new findings
+
+Per explicit user request ("check with the notified issues for rectification"),
+reviewed `health-check.js`'s hourly alerts the morning after the OTP saga
+above, to confirm the reseller fix actually held and see what's still open.
+
+**Reseller-OTP fix confirmed stable**: the CRITICAL "Paynix reseller: last
+updated 9.0h ago" alert is **gone** from the latest health-check run
+(`31460767869`, genuine `schedule` trigger, not manual) — reseller data is
+flowing normally again. Also separately confirmed via a genuinely
+`schedule`-triggered (not `workflow_dispatch`) `wallet-alert.yml` run
+succeeding with all 20 merchants, which is what resolved the earlier "is
+this a Paynix outage or our own throttling" question from the previous
+session in this same file — a real scheduled trigger, uninvolved with any
+of this session's manual testing, hit the same infrastructure and worked
+fine, confirming the connectivity issue was transient and Paynix-side, not
+self-inflicted.
+
+**Three findings from the latest health-check run** (`31460767869`,
+2026-08-11 05:10 UTC), diagnosed against the same-morning `refresh.yml` run
+(`31459493909`) rather than left as raw alert text:
+
+1. **New, distinct bug — PixlerPay-side idle clients grew from 4 to 7**
+   (BITNEXY, Curiobyte, DATSHA, EIENON, FINFLEX, N V CONNECT, SRKA WS).
+   Root cause is **not** the Paynix OTP issue — it's `download-report.js`
+   (a completely separate PixlerPay-portal script) hitting
+   `locator.click: Timeout 30000ms exceeded` right after "Navigating to
+   payout transactions..." for every one of these 7 clients, consistently,
+   in the latest run. N V CONNECT's failure here is the already-documented
+   broken-portal-layout issue (limitation #3); the other 6 failing with the
+   *identical* symptom is new and not yet explained — worth checking
+   whether PixlerPay's own merchant-dashboard UI changed the "Payouts
+   Transaction" link/button (same category of change as Paynix's OTP
+   rollout, different platform) before assuming it's 6 independently broken
+   accounts. **Not yet investigated further or fixed** — flagging for next
+   session.
+2. **VELCYNTRA / RAAMIRO "no data" persists across two separate days**
+   (first seen 2026-08-10, still present 2026-08-11) — checked whether this
+   is the same suspended-account pattern found earlier for ANTARIKSHA/
+   SUVIKA/Bitnexy: **it isn't** — both accounts show the normal "A one-time
+   code was sent to your email" OTP screen on login, not a suspension
+   message. In the same morning's `refresh.yml` run, both failed with
+   `page.goto: Timeout 30000ms exceeded` in
+   `download-paynix-merchant-reports.js` — and both sit near the end of the
+   sequential 20-merchant login loop (13th and 17th of 20 in
+   `data/paynix-merchant-logins.json`), same position pattern as several
+   other merchants that failed with connection timeouts in that run
+   (Curiobyte, Bitnexy, DATSHA also timed out, just earlier in the
+   sequence). Working theory, not yet confirmed: **doing ~20 sequential
+   logins from one CI run may itself be triggering Paynix-side
+   throttling/slowdown that compounds toward the end of the loop** — would
+   explain why the *same* two accounts keep landing in "no data" (they have
+   no historical successful report file to fall back to, unlike merchants
+   who succeeded at least once before and get a stale-but-present
+   `hasData: true`). If this recurs, consider either shuffling merchant
+   order per run (so the same accounts don't always draw the "back of the
+   queue" position) or spacing out logins with a small delay between each.
+3. **New: rate-card drift** — health-check flagged **PARAKEET ENGINEERING
+   PVT LTD** present in the live Google Sheet (see `pixlerpay-paynix-sheet`
+   memory for the URL) but missing from
+   `data/paynix-commission-rates.json`. Not yet added — needs a fresh sheet
+   read (Sheets API, `includeGridData: true`, not the Drive MCP markdown
+   export — see the 2026-08-03 note above on why) to get its real
+   Sumeet/Onboarded/AK/Ansh rates before adding, same process as the
+   VIKZONE/VYSHIKAX/VELCYNTRA/ZYPHERON batch on 2026-08-02.
+
+**None of these 3 fixed yet** — documented for the next session/request
+rather than fixed inline, since diagnosing the reseller-OTP root cause and
+confirming it was the priority for this pass. Also noted in passing: a
+`check-pixlerpay-wallets.mjs` script and its own HANDOFF section (below,
+"PixlerPay merchant wallet-balance check") appeared in this repo's working
+tree from what looks like a different concurrent session — left untouched
+and not claimed as this session's work.
 
 ## Master reconciliation sheet spot-check, 2026-08-10
 
