@@ -22,6 +22,7 @@ const ATMOON_MERCHANT_IDS = new Set([
   'MER_1F18C5EDCA3B', // RASHEEYA TECHNOLOGY PRIVATE LIMITED — added 2026-08-11 per explicit request
   'MER_BE152E9A611E', // PARAKEET ENGINEERING PVT LTD — added 2026-08-11, Ansh Part client per explicit request
   'MER_DBC71D6C79ED', // SURAJ WELLNESS PRIVATE LIMITED — added 2026-08-11, Ansh Part client per explicit request
+  'MER_AACC5365BC9F', // BABA ENTERPRISES — added 2026-08-11 per explicit request
 ]);
 const PAYNIX_RESULTS_FILE = path.join('./website', 'paynix-results.json');
 // Own dedicated file (see download-paynix-merchant-wallets.js) — split
