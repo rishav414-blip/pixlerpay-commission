@@ -1,7 +1,7 @@
 
 # Handoff — PixlerPay / Paynix Commission Dashboard
 
-Last updated: 2026-08-11 (3 new merchants onboarded — Parakeet/Baba/Suraj Wellness; wallet-log scraper partial-read bug fixed; Drive API key rotated after a Google bot-detection block broke the live dashboard, longer-term proxy fix planned but not built — see "Merchant onboarding, wallet-scraper partial-read bug, and Drive API key rotation" below; also: session persistence + login-failure backoff/critical-alert for merchant-portal logins; suspended-merchant misdiagnosis corrected; PixlerPay-side tracking removed from refresh.yml — this pipeline now concentrates on Paynix only; health-check Telegram now CRITICAL-only — see "Session persistence, login-failure alerting, and Paynix-only refocus" below)
+Last updated: 2026-08-12 (3 new merchants onboarded — Parakeet/Baba/Suraj Wellness; wallet-log scraper partial-read bug fixed; Drive API key rotated after a Google bot-detection block broke the live dashboard, longer-term proxy fix planned but not built — see "Merchant onboarding, wallet-scraper partial-read bug, and Drive API key rotation" below; also: session persistence + login-failure backoff/critical-alert for merchant-portal logins; suspended-merchant misdiagnosis corrected; PixlerPay-side tracking removed from refresh.yml — this pipeline now concentrates on Paynix only; health-check Telegram now CRITICAL-only — see "Session persistence, login-failure alerting, and Paynix-only refocus" below; also: `fill-master-payout-detail.mjs` found still using the old pre-OTP login and fixed, 3 Atmoon-merchant payout IDs looked up and backfilled into the Master reconciliation sheet — see "Atmoon-merchant payout check + master-sheet backfill" below)
 
 ## What this project is
 
@@ -846,6 +846,68 @@ here (`scripts/`) that takes a list of payoutIds and checks them against
 the sheet via the Sheets API + `rinariapexservices` credential, instead of
 depending on manual Drive-share access from an unrelated project session
 each time.
+
+## Atmoon-merchant payout check + master-sheet backfill, 2026-08-12
+
+User gave 4 `PAY_OUT_*` IDs (3 unique — `PAY_OUT_2A04D5D90F88` was listed
+twice) with no merchant/date attached, and asked to check/add them in the
+Master reconciliation sheet, plus "check of the agent I have designed for
+this activity." No dedicated "Atmoon" agent was found anywhere (checked
+this repo's `.claude/agents/`, `~/.claude/agents`, and a project-wide file
+search) — the closest existing tooling is `paynix-reconciliation-analyst`
+(agent) / `scripts/fill-master-payout-detail.mjs` (script), which already
+owns exactly this "check one payoutId, add to master sheet if missing"
+workflow, just not scoped specifically to the 12 Atmoon merchants
+(`scripts/filter-paynix-atmoon.js`'s `ATMOON_MERCHANT_IDS`).
+
+**Sheet-shape check before touching anything**: confirmed via
+`get_file_metadata` that the Master reconciliation sheet has changed since
+the agent docs were written — retitled "Master reconciliation issue 29th
+July" (was "17th July"), reset to header-only (`fileSize: 2142` bytes,
+`modifiedTime: 2026-08-12`), and gained a **17th column, "Final Status"**
+(previously 16 columns, A–P). `fill-master-payout-detail.mjs` hardcodes
+`Sheet1!A:P` and writes exactly 16-value rows — still works correctly for
+columns A–P, just leaves the new "Final Status" column blank on any row it
+writes/appends (non-destructive, not investigated further what that column
+is meant to hold — presumably a manual field the user fills by hand).
+
+**Found which merchant owned each ID**: none of the 3 were in the local
+3-day report cache or the separate records-index sheet (which only tracks
+Sunshine/Curiobyte/Digiroute/Emervex/Define/Elleaura, not the Atmoon set).
+User asked to search all 12 Atmoon portals rather than name the merchant.
+Built a one-off finder script (not committed, deleted after use) that logs
+into each of the 12 Atmoon merchants **once** (reusing `loginPaynixMerchant`
+so it's OTP-safe) and checks a wide `2026-06-01..today` window via the fast
+JSON payouts API — 12 logins total instead of the 36 a naive
+per-ID-per-merchant approach would need, deliberately to avoid retripping
+today's earlier OTP rate-limit issue. Found:
+- `PAY_OUT_2A04D5D90F88` and `PAY_OUT_84A9C7E9873C` → **VYSHIKAX
+  TECHNOLOGY PRIVATE LIMITED**
+- `PAY_OUT_477ACE4E4DED` → **WILDBADGER TECHNOLOGY PRIVATE LIMITED**
+- SHESTYLE and Parakeet Engineering hit a transient login failure during
+  the scan (not investigated — irrelevant once all 3 targets were already
+  found elsewhere).
+
+**Second script found broken, fixed**: `fill-master-payout-detail.mjs` still
+had the **old pre-OTP plain login** (`fill` → `fill` → click "Log in" →
+flat `waitForTimeout(3000)`), never updated when the merchant-portal OTP
+fix landed 2026-08-10 for the other three scripts. A first dry-run attempt
+timed out inside `exportPayouts()` (silently unauthenticated, redirected
+back to login) — confirmed the cause and fixed by switching this script to
+the shared `loginPaynixMerchant()` helper too, same one-line change pattern
+as the earlier fix. **This means any other not-yet-found script still using
+the old inline login block will have the same silent failure — worth a
+repo-wide grep for `getByRole('textbox', { name: 'Email address' })` next
+time something in this family acts up, rather than assuming the 2026-08-10
+fix covered everything that touches this portal.**
+
+**All 3 entries added**, verified by re-reading the sheet afterward:
+- VYSHIKAX / `PAY_OUT_2A04D5D90F88` — ₹5,000, SUCCESS, Vasid khan,
+  07/08/2026 23:28
+- VYSHIKAX / `PAY_OUT_84A9C7E9873C` — ₹20,000, SUCCESS, Ajay Bairagi,
+  12/08/2026 00:55
+- WILDBADGER / `PAY_OUT_477ACE4E4DED` — ₹5,000, SUCCESS, Karibkhan,
+  10/08/2026 06:33
 
 ## PixlerPay merchant wallet-balance check, added 2026-08-10
 

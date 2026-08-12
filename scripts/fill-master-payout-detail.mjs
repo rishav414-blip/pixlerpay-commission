@@ -22,6 +22,7 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import xlsx from 'xlsx';
 import { google } from 'googleapis';
+import { loginPaynixMerchant } from './lib/paynix-merchant-login.js';
 
 const MASTER_SPREADSHEET_ID = '1sH-r3J7SSXDgpdYiiApYdf1j6HGMq3uZdm89YLXanIQ';
 const OAUTH_CLIENT_FILE = './data/gdrive-oauth-client.json';
@@ -129,11 +130,7 @@ async function run() {
   const page = await context.newPage();
 
   console.log(`Logging into ${login.merchantLabel}...`);
-  await page.goto(login.loginUrl, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('textbox', { name: 'Email address' }).fill(login.username);
-  await page.getByRole('textbox', { name: 'Password' }).fill(login.password);
-  await page.getByRole('button', { name: 'Log in' }).click();
-  await page.waitForTimeout(3000);
+  await loginPaynixMerchant(page, login.loginUrl, login.username, login.password);
 
   console.log(`Exporting payouts ${FROM}..${TO} to find ${PAYOUT_ID}...`);
   const rows = await exportPayouts(page, FROM, TO);
