@@ -37,10 +37,12 @@ const {
   GITHUB_TOKEN,
 } = process.env;
 
-// Real cadence is ~60-90 min (GitHub's `schedule` trigger is best-effort,
-// see HANDOFF.md) — thresholds set well above the configured 15/30-min
-// cadence to avoid false alarms on normal scheduling jitter, but tight
-// enough to catch a genuinely stuck pipeline.
+// Real cadence is ~60-90 min for refresh.yml (GitHub's `schedule` trigger
+// is best-effort, see HANDOFF.md) — thresholds set well above its
+// configured 30-min cadence to avoid false alarms on normal scheduling
+// jitter, but tight enough to catch a genuinely stuck pipeline. Used for
+// Drive-snapshot freshness (checkFreshnessAndData) and as the default for
+// any workflow not given its own thresholds below.
 const WARN_STALE_MS = 2 * 60 * 60 * 1000; // 2h
 const CRITICAL_STALE_MS = 4 * 60 * 60 * 1000; // 4h
 
@@ -64,7 +66,17 @@ const CREDENTIAL_FILES = [
   { name: 'PAYNIX_MERCHANT_LOGINS', path: './data/paynix-merchant-logins.json' },
 ];
 const WORKFLOWS_REPO = 'rishav414-blip/pixlerpay-commission';
-const WORKFLOWS = ['refresh.yml', 'wallet-alert.yml'];
+// Per-workflow staleness thresholds, added 2026-08-12 — the shared
+// WARN/CRITICAL_STALE_MS above (2h/4h) is tuned for refresh.yml's ~30-90
+// min cadence and was silently useless for wallet-alert.yml, which runs
+// every ~5 min via external cron: a real ~16-minute gap (3 consecutive
+// dispatches cancelled while queued behind a slow-to-be-scheduled run —
+// see the cancelled-run-streak check below for the actual root cause)
+// produced zero alert, since it never got remotely close to 2 hours.
+const WORKFLOWS = [
+  { file: 'refresh.yml', warnMs: WARN_STALE_MS, criticalMs: CRITICAL_STALE_MS },
+  { file: 'wallet-alert.yml', warnMs: 15 * 60 * 1000, criticalMs: 30 * 60 * 1000 },
+];
 
 const issues = []; // { severity: 'CRITICAL'|'WARNING', text }
 function flag(severity, text) {
@@ -192,12 +204,28 @@ function checkCredentialSyncDrift() {
   }
 }
 
+// A run that shows "cancelled" with zero jobs ever having started is
+// GitHub's own concurrency-group behavior (cancel-in-progress: false
+// allows only one *queued* run behind the currently-running one; a newer
+// dispatch arriving before the queued one gets a runner cancels that
+// older queued run, not whatever's actually executing). Confirmed live
+// 2026-08-12: 3 consecutive wallet-alert.yml dispatches (16:01, 16:05,
+// 16:10) got cancelled this way despite the previous run having already
+// finished cleanly at 15:59 — runner-assignment delay (GitHub-side queue
+// congestion, not a bug in this repo) let dispatches stack up faster than
+// they could actually start. Distinguishing this from a real code failure
+// matters: a cancelled-run streak means "the workflow never got to run
+// its own logic at all", not "its logic broke" — the message should say
+// so, since the fix (wait it out / manually dispatch once) is different
+// from debugging a script.
+const CANCELLED_STREAK_THRESHOLD = 3;
+
 async function checkWorkflowHealth() {
   if (!GITHUB_TOKEN) {
     flag('WARNING', 'Workflow-run health check skipped — no GITHUB_TOKEN available.');
     return;
   }
-  for (const wf of WORKFLOWS) {
+  for (const { file: wf, warnMs, criticalMs } of WORKFLOWS) {
     try {
       const res = await fetch(
         `https://api.github.com/repos/${WORKFLOWS_REPO}/actions/workflows/${wf}/runs?per_page=5`,
@@ -209,15 +237,29 @@ async function checkWorkflowHealth() {
       }
       const json = await res.json();
       const runs = json.workflow_runs || [];
+
+      // Most-recent-first streak of cancelled runs, checked before the
+      // staleness check below so a queue-congestion pattern gets its own
+      // clear diagnosis instead of just reading as generic staleness.
+      let cancelledStreak = 0;
+      for (const r of runs) {
+        if (r.conclusion !== 'cancelled') break;
+        cancelledStreak++;
+      }
+      if (cancelledStreak >= CANCELLED_STREAK_THRESHOLD) {
+        flag('CRITICAL', `Workflow ${wf}: last ${cancelledStreak} run(s) cancelled before starting (queue congestion — dispatches arriving faster than GitHub is assigning runners, not a code failure). Next successful run will self-correct (diff-since-last-success + partial-read-guard merge already tolerate the gap) — if this persists past a few cycles, trigger one manual "Run workflow" to break the cancellation cycle.`);
+        continue;
+      }
+
       const lastSuccess = runs.find((r) => r.conclusion === 'success');
       if (!lastSuccess) {
         flag('CRITICAL', `Workflow ${wf}: no successful run in the last 5 attempts.`);
         continue;
       }
       const age = ageMs(lastSuccess.updated_at);
-      if (age >= CRITICAL_STALE_MS) {
+      if (age >= criticalMs) {
         flag('CRITICAL', `Workflow ${wf}: last success ${fmtAge(age)} ago.`);
-      } else if (age >= WARN_STALE_MS) {
+      } else if (age >= warnMs) {
         flag('WARNING', `Workflow ${wf}: last success ${fmtAge(age)} ago.`);
       }
     } catch (err) {
