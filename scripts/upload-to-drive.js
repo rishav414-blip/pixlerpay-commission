@@ -26,12 +26,25 @@ const PAYNIX_ATMOON_COMMISSION_RESULTS_FILE = path.join('./website', 'paynix-atm
 const PAYNIX_ATMOON_RESULTS_FILE = path.join('./website', 'paynix-atmoon-results.json');
 const PAYNIX_ATMOON_WALLETLOG_RESULTS_FILE = path.join('./website', 'paynix-atmoon-wallet-log-results.json');
 
-const ALL_FILES = [
-  RESULTS_FILE, PAYNIX_RESULTS_FILE, PIXLERPAY_MERCHANT_RESULTS_FILE, PAYNIX_COMMISSION_RESULTS_FILE,
-  PAYNIX_WALLETLOG_RESULTS_FILE, PAYNIX_ATMOON_COMMISSION_RESULTS_FILE, PAYNIX_ATMOON_RESULTS_FILE, PAYNIX_ATMOON_WALLETLOG_RESULTS_FILE,
+// Single source of truth for "which files get uploaded, to which Drive
+// file ID, under which name" — was 8 near-identical `if (fs.existsSync(X))
+// { await uploadFile(X, name, mime, envId); }` blocks in run() below, one
+// per file, that had drifted out of sync with this array (ALL_FILES used
+// to only feed the "nothing to upload" guard, not actually drive the
+// uploads). Collapsed 2026-08-12 so adding the next file is one array
+// entry, not a copy-pasted block.
+const FILE_SPECS = [
+  { path: RESULTS_FILE, driveName: 'commission-results.json', envId: GOOGLE_DRIVE_RESULTS_FILE_ID },
+  { path: PAYNIX_RESULTS_FILE, driveName: 'paynix-results.json', envId: GOOGLE_DRIVE_PAYNIX_FILE_ID },
+  { path: PIXLERPAY_MERCHANT_RESULTS_FILE, driveName: 'pixlerpay-merchant-results.json', envId: GOOGLE_DRIVE_PIXLERPAY_MERCHANT_FILE_ID },
+  { path: PAYNIX_COMMISSION_RESULTS_FILE, driveName: 'paynix-commission-results.json', envId: GOOGLE_DRIVE_PAYNIX_COMMISSION_FILE_ID },
+  { path: PAYNIX_WALLETLOG_RESULTS_FILE, driveName: 'paynix-wallet-log-results.json', envId: GOOGLE_DRIVE_PAYNIX_WALLETLOG_FILE_ID },
+  { path: PAYNIX_ATMOON_COMMISSION_RESULTS_FILE, driveName: 'paynix-atmoon-commission-results.json', envId: GOOGLE_DRIVE_PAYNIX_ATMOON_COMMISSION_FILE_ID },
+  { path: PAYNIX_ATMOON_RESULTS_FILE, driveName: 'paynix-atmoon-results.json', envId: GOOGLE_DRIVE_PAYNIX_ATMOON_FILE_ID },
+  { path: PAYNIX_ATMOON_WALLETLOG_RESULTS_FILE, driveName: 'paynix-atmoon-wallet-log-results.json', envId: GOOGLE_DRIVE_PAYNIX_ATMOON_WALLETLOG_FILE_ID },
 ];
-if (!ALL_FILES.some((f) => fs.existsSync(f))) {
-  console.error(`Missing all of ${ALL_FILES.join(', ')}. Run the relevant download/calculate script(s) first.`);
+if (!FILE_SPECS.some((f) => fs.existsSync(f.path))) {
+  console.error(`Missing all of ${FILE_SPECS.map((f) => f.path).join(', ')}. Run the relevant download/calculate script(s) first.`);
   process.exit(1);
 }
 
@@ -105,39 +118,35 @@ async function uploadFile(localPath, driveName, mimeType, knownFileId) {
 }
 
 async function run() {
-  if (fs.existsSync(RESULTS_FILE)) {
-    const resultsFileId = await uploadFile(RESULTS_FILE, 'commission-results.json', 'application/json', GOOGLE_DRIVE_RESULTS_FILE_ID);
-    console.log('commission-results.json Drive file ID:', resultsFileId);
+  let uploaded = 0;
+  let skipped = 0;
+  const failures = [];
+
+  for (const spec of FILE_SPECS) {
+    if (!fs.existsSync(spec.path)) {
+      skipped++;
+      continue;
+    }
+    // Isolated per-file, added 2026-08-12 — previously a single failed
+    // upload (a transient Drive API error, say) threw straight out of the
+    // sequential await chain and aborted every file after it in the list,
+    // silently skipping uploads that had nothing wrong with them. Now one
+    // bad file is recorded and the rest still get attempted.
+    try {
+      const fileId = await uploadFile(spec.path, spec.driveName, 'application/json', spec.envId);
+      console.log(`${spec.driveName} Drive file ID:`, fileId);
+      uploaded++;
+    } catch (err) {
+      console.error(`FAILED to upload ${spec.driveName}: ${err.message}`);
+      failures.push(spec.driveName);
+    }
   }
-  if (fs.existsSync(PAYNIX_RESULTS_FILE)) {
-    const paynixFileId = await uploadFile(PAYNIX_RESULTS_FILE, 'paynix-results.json', 'application/json', GOOGLE_DRIVE_PAYNIX_FILE_ID);
-    console.log('paynix-results.json Drive file ID:', paynixFileId);
-  }
-  if (fs.existsSync(PIXLERPAY_MERCHANT_RESULTS_FILE)) {
-    const pixlerMerchantFileId = await uploadFile(PIXLERPAY_MERCHANT_RESULTS_FILE, 'pixlerpay-merchant-results.json', 'application/json', GOOGLE_DRIVE_PIXLERPAY_MERCHANT_FILE_ID);
-    console.log('pixlerpay-merchant-results.json Drive file ID:', pixlerMerchantFileId);
-  }
-  if (fs.existsSync(PAYNIX_COMMISSION_RESULTS_FILE)) {
-    const paynixCommissionFileId = await uploadFile(PAYNIX_COMMISSION_RESULTS_FILE, 'paynix-commission-results.json', 'application/json', GOOGLE_DRIVE_PAYNIX_COMMISSION_FILE_ID);
-    console.log('paynix-commission-results.json Drive file ID:', paynixCommissionFileId);
-  }
-  if (fs.existsSync(PAYNIX_WALLETLOG_RESULTS_FILE)) {
-    const walletLogFileId = await uploadFile(PAYNIX_WALLETLOG_RESULTS_FILE, 'paynix-wallet-log-results.json', 'application/json', GOOGLE_DRIVE_PAYNIX_WALLETLOG_FILE_ID);
-    console.log('paynix-wallet-log-results.json Drive file ID:', walletLogFileId);
-  }
-  if (fs.existsSync(PAYNIX_ATMOON_COMMISSION_RESULTS_FILE)) {
-    const id = await uploadFile(PAYNIX_ATMOON_COMMISSION_RESULTS_FILE, 'paynix-atmoon-commission-results.json', 'application/json', GOOGLE_DRIVE_PAYNIX_ATMOON_COMMISSION_FILE_ID);
-    console.log('paynix-atmoon-commission-results.json Drive file ID:', id);
-  }
-  if (fs.existsSync(PAYNIX_ATMOON_RESULTS_FILE)) {
-    const id = await uploadFile(PAYNIX_ATMOON_RESULTS_FILE, 'paynix-atmoon-results.json', 'application/json', GOOGLE_DRIVE_PAYNIX_ATMOON_FILE_ID);
-    console.log('paynix-atmoon-results.json Drive file ID:', id);
-  }
-  if (fs.existsSync(PAYNIX_ATMOON_WALLETLOG_RESULTS_FILE)) {
-    const id = await uploadFile(PAYNIX_ATMOON_WALLETLOG_RESULTS_FILE, 'paynix-atmoon-wallet-log-results.json', 'application/json', GOOGLE_DRIVE_PAYNIX_ATMOON_WALLETLOG_FILE_ID);
-    console.log('paynix-atmoon-wallet-log-results.json Drive file ID:', id);
-  }
-  console.log('\nDone.');
+
+  console.log(`\nDone. ${uploaded} uploaded, ${skipped} not present locally (skipped)${failures.length ? `, ${failures.length} FAILED: ${failures.join(', ')}` : ''}.`);
+  // Non-zero exit if anything failed, but only after every other file was
+  // still attempted above — callers with continue-on-error already tolerate
+  // this; the point is the failure is visible instead of silently eaten.
+  if (failures.length) process.exitCode = 1;
 }
 
 run().catch((err) => {

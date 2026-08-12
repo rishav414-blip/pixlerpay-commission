@@ -31,6 +31,7 @@
 import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { fetchPreviousFromDrive } from './lib/drive-fetch.js';
 
 const RATES_FILE = path.join('./data', 'paynix-commission-rates.json');
@@ -40,12 +41,12 @@ const RETENTION_DAYS = 30;
 
 const { GOOGLE_DRIVE_PAYNIX_COMMISSION_FILE_ID, GOOGLE_DRIVE_API_KEY } = process.env;
 
-function isSuccessful(status) {
+export function isSuccessful(status) {
   return String(status || '').trim().toUpperCase() === 'SUCCESS';
 }
 
 // Paynix merchant export dates look like "9/7/2026, 12:37:47 pm" (D/M/YYYY).
-function parseToISODate(value) {
+export function parseToISODate(value) {
   if (!value) return null;
   const s = String(value).trim();
   const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
@@ -62,7 +63,7 @@ function parseToISODate(value) {
 // for clients whose commercial terms changed mid-flight (effectiveFrom: null
 // = applies from the beginning). Picks the latest entry whose effectiveFrom
 // is on/before the transaction's date; falls back to the undated entry.
-function resolveRateForDate(rate, isoDate) {
+export function resolveRateForDate(rate, isoDate) {
   if (!rate.rateHistory || !rate.rateHistory.length) return rate;
   const applicable = rate.rateHistory
     .filter((h) => !h.effectiveFrom || !isoDate || h.effectiveFrom <= isoDate)
@@ -71,20 +72,20 @@ function resolveRateForDate(rate, isoDate) {
   return { ...rate, ...chosen };
 }
 
-function calcMarginCommission(amount, rate) {
+export function calcMarginCommission(amount, rate) {
   if (amount <= 1000 && rate.onboardedFlatBelow1000 != null && rate.resellerFlatBelow1000 != null) {
     return rate.onboardedFlatBelow1000 - rate.resellerFlatBelow1000;
   }
   return (amount * (rate.onboardedPct - rate.resellerPct)) / 100;
 }
 
-function calcAkCommission(amount, rate) {
+export function calcAkCommission(amount, rate) {
   if (amount <= 1000) return 0;
   if (rate.akPct == null) return 0;
   return (amount * rate.akPct) / 100;
 }
 
-function calcAnsCommission(amount, rate) {
+export function calcAnsCommission(amount, rate) {
   if (rate.ansPct == null) return 0;
   if (amount <= 1000 && rate.ansFlatBelow1000 != null) return rate.ansFlatBelow1000;
   return (amount * rate.ansPct) / 100;
@@ -217,4 +218,19 @@ async function main() {
   }
 }
 
-main();
+// Guarded, added 2026-08-12 — this file's pure functions (calcMarginCommission,
+// calcAkCommission, calcAnsCommission, resolveRateForDate, etc.) are now
+// imported directly by test/commission-math.test.js. Without this guard,
+// merely importing the module for its functions would trigger the full
+// script (file reads, Drive network calls, possible process.exit) since
+// main() used to run unconditionally at module load. Running this file
+// directly (`node scripts/calculate-paynix-commission.js` / `npm run
+// calculate-paynix`) is unaffected. Uses pathToFileURL rather than a naive
+// `file://${process.argv[1]}` string comparison — that naive form silently
+// breaks on Windows (backslashes + missing percent-encoding mean it never
+// equals import.meta.url), which would have made main() never run at all
+// when executed directly on a Windows dev machine — caught before this
+// ever shipped by testing the guard locally on Windows.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}

@@ -1,0 +1,31 @@
+name: Tests
+
+# Independent of refresh.yml/wallet-alert.yml/health-check.yml — runs on
+# every push, no schedule, no secrets needed (the test suite only imports
+# pure functions and reads static files in this repo, never touches
+# Drive/Paynix/Telegram). Added 2026-08-12 alongside the first tests
+# (commission math, wallet-timestamp parsing + drift guard against the
+# two HTML copies) — this is what actually runs them; a test file with
+# nothing wiring it into CI only protects someone who remembers to run
+# `npm test` locally before pushing.
+on:
+  push:
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test

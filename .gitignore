@@ -30,5 +30,9 @@ data/reseller-ledger-*.json
 data/pixlerpay-telegram-previous.json
 data/_export-cache/
 data/paynix-sessions/
+# Ad-hoc scratch outputs from one-off diagnostic scripts (leading underscore
+# = throwaway convention, matches data/_export-cache/ above) — contain real
+# payout/merchant data, shouldn't be swept in by a careless `git add -A`.
+data/_*.json
 wallet-check-results.json
 !data/.gitkeep
