@@ -133,9 +133,10 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          # 9 specific merchants' top-up alerts route here instead of the
-          # default chat above — see ATMOON_MERCHANT_IDS in
-          # telegram-alert.js. Added 2026-08-07.
+          # Per-merchant dedicated-group top-up routing — see TOPUP_ROUTES
+          # in telegram-alert.js. Atmoon added 2026-08-07; Baba Enterprises
+          # added 2026-08-11 (its own group, not Atmoon).
           TELEGRAM_ATMOON_CHAT_ID: ${{ secrets.TELEGRAM_ATMOON_CHAT_ID }}
+          TELEGRAM_BABA_CHAT_ID: ${{ secrets.TELEGRAM_BABA_CHAT_ID }}
           TELEGRAM_ALERT_SECTIONS: 'topups'
         run: npm run telegram-alert

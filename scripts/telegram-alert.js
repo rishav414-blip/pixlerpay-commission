@@ -2,27 +2,46 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALERT_SECTIONS, TELEGRAM_ATMOON_CHAT_ID } = process.env;
+const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALERT_SECTIONS, TELEGRAM_ATMOON_CHAT_ID, TELEGRAM_BABA_CHAT_ID } = process.env;
 
-// These merchants' wallet top-up alerts route exclusively to the
-// "Atmoon :: Paynix : Pixler" Telegram group instead of the default chat
-// — added 2026-08-07 per explicit request (that group should only ever
-// show these merchants, not the full Paynix roster). Failed-payout
-// alerts are unaffected — this only splits the topups section.
-const ATMOON_MERCHANT_IDS = new Set([
-  'MER_F2155A2A1F99', // SHESTYLE BULK TRADERS PRIVATE LIMITED
-  'MER_0D622C7553A1', // RAAMIRO TRINTROY PRIVATE LIMITED
-  'MER_E75F374D3B5A', // WILDBADGER TECHNOLOGY PRIVATE LIMITED
-  'MER_CC95D8E2A947', // TECHMARKETIQ TECHNOLOGY PRIVATE LIMITED
-  'MER_81FB09B83B4C', // KAHUA SYSTEMS PRIVATE LIMITED
-  'MER_EB9A8C4D9025', // VIKZONE TECHNOLOGY PRIVATE LIMITED
-  'MER_EB1BE5D25983', // VYSHIKAX TECHNOLOGY PRIVATE LIMITED
-  'MER_810B49283330', // VELCYNTRA TECHNOLOGIES PRIVATE LIMITED
-  'MER_19F368135CE0', // ZYPHERON TECHNOLOGY PRIVATE LIMITED
-  'MER_1F18C5EDCA3B', // RASHEEYA TECHNOLOGY PRIVATE LIMITED — added 2026-08-11 per explicit request
-  'MER_BE152E9A611E', // PARAKEET ENGINEERING PVT LTD — added 2026-08-11, Ansh Part client per explicit request
-  'MER_DBC71D6C79ED', // SURAJ WELLNESS PRIVATE LIMITED — added 2026-08-11, Ansh Part client per explicit request
-]);
+// Per-merchant wallet-top-up-only routing to dedicated Telegram groups,
+// each instead of (not in addition to) the default chat. Failed-payout
+// alerts are unaffected — this only ever splits the topups section.
+// Generalized 2026-08-11 (was: a single hardcoded ATMOON_MERCHANT_IDS set
+// + isAtmoon boolean) into a list so adding the next one-off group is just
+// one more entry here, not a repeat of this same refactor.
+const TOPUP_ROUTES = [
+  {
+    label: 'Atmoon',
+    chatId: TELEGRAM_ATMOON_CHAT_ID,
+    // Added 2026-08-07 per explicit request (that group should only ever
+    // show these merchants, not the full Paynix roster).
+    merchantIds: new Set([
+      'MER_F2155A2A1F99', // SHESTYLE BULK TRADERS PRIVATE LIMITED
+      'MER_0D622C7553A1', // RAAMIRO TRINTROY PRIVATE LIMITED
+      'MER_E75F374D3B5A', // WILDBADGER TECHNOLOGY PRIVATE LIMITED
+      'MER_CC95D8E2A947', // TECHMARKETIQ TECHNOLOGY PRIVATE LIMITED
+      'MER_81FB09B83B4C', // KAHUA SYSTEMS PRIVATE LIMITED
+      'MER_EB9A8C4D9025', // VIKZONE TECHNOLOGY PRIVATE LIMITED
+      'MER_EB1BE5D25983', // VYSHIKAX TECHNOLOGY PRIVATE LIMITED
+      'MER_810B49283330', // VELCYNTRA TECHNOLOGIES PRIVATE LIMITED
+      'MER_19F368135CE0', // ZYPHERON TECHNOLOGY PRIVATE LIMITED
+      'MER_1F18C5EDCA3B', // RASHEEYA TECHNOLOGY PRIVATE LIMITED — added 2026-08-11
+      'MER_BE152E9A611E', // PARAKEET ENGINEERING PVT LTD — added 2026-08-11, Ansh Part client
+      'MER_DBC71D6C79ED', // SURAJ WELLNESS PRIVATE LIMITED — added 2026-08-11, Ansh Part client
+    ]),
+  },
+  {
+    label: 'Payout: Baba Enterprises',
+    chatId: TELEGRAM_BABA_CHAT_ID,
+    // Added 2026-08-11 per explicit request — its own dedicated group, not
+    // Atmoon (an earlier attempt routed it there in error, reverted).
+    merchantIds: new Set([
+      'MER_AACC5365BC9F', // BABA ENTERPRISES
+    ]),
+  },
+];
+const ALL_ROUTED_MERCHANT_IDS = new Set(TOPUP_ROUTES.flatMap((r) => [...r.merchantIds]));
 const PAYNIX_RESULTS_FILE = path.join('./website', 'paynix-results.json');
 // Own dedicated file (see download-paynix-merchant-wallets.js) — split
 // out 2026-08-07 so wallet-alert.yml and refresh.yml never share a Drive
@@ -117,8 +136,10 @@ function buildFailedPayoutMessage(d) {
   return lines.join('\n');
 }
 
-// isAtmoon: true -> only the 9 Atmoon-routed merchants; false -> everyone else.
-function buildTopupMessage(d, isAtmoon) {
+// matchMerchantId: (merchantId) => boolean — which merchants this message
+// should include. Callers pass a route's own Set membership check, or (for
+// the default chat) "not claimed by any dedicated route".
+function buildTopupMessage(d, matchMerchantId) {
   const newLoadRequests = d.newLoadRequests || {};
   // Cap per merchant first (so one very active merchant can't crowd out
   // everyone else), then flatten across all merchants and sort the whole
@@ -130,7 +151,7 @@ function buildTopupMessage(d, isAtmoon) {
   const flattened = [];
   for (const [merchantId, reqs] of Object.entries(newLoadRequests)) {
     if (!reqs.length) continue;
-    if (ATMOON_MERCHANT_IDS.has(merchantId) !== isAtmoon) continue;
+    if (!matchMerchantId(merchantId)) continue;
     for (const r of capWalletEntries(reqs)) flattened.push(r);
   }
   if (flattened.length === 0) return '';
@@ -203,14 +224,16 @@ async function run() {
 
   if (ENABLED_SECTIONS.has('topups') && fs.existsSync(PAYNIX_WALLETLOG_RESULTS_FILE)) {
     const d = JSON.parse(fs.readFileSync(PAYNIX_WALLETLOG_RESULTS_FILE, 'utf-8'));
-    const defaultMsg = buildTopupMessage(d, false);
+    const defaultMsg = buildTopupMessage(d, (id) => !ALL_ROUTED_MERCHANT_IDS.has(id));
     if (defaultMsg) messages.push({ text: defaultMsg, chatId: TELEGRAM_CHAT_ID });
 
-    if (TELEGRAM_ATMOON_CHAT_ID) {
-      const atmoonMsg = buildTopupMessage(d, true);
-      if (atmoonMsg) messages.push({ text: atmoonMsg, chatId: TELEGRAM_ATMOON_CHAT_ID });
-    } else {
-      console.log('TELEGRAM_ATMOON_CHAT_ID not set — Atmoon-routed merchants\' top-up alerts are being skipped, not sent to the default chat.');
+    for (const route of TOPUP_ROUTES) {
+      if (!route.chatId) {
+        console.log(`Chat ID for "${route.label}" not set — its top-up alerts are being skipped, not sent to the default chat.`);
+        continue;
+      }
+      const msg = buildTopupMessage(d, (id) => route.merchantIds.has(id));
+      if (msg) messages.push({ text: msg, chatId: route.chatId });
     }
   }
 
