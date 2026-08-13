@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseWalletTimestamp } from './lib/wallet-timestamp.js';
 
-const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALERT_SECTIONS, TELEGRAM_ATMOON_CHAT_ID, TELEGRAM_BABA_CHAT_ID } = process.env;
+const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALERT_SECTIONS, TELEGRAM_ATMOON_CHAT_ID, TELEGRAM_BABA_CHAT_ID, TELEGRAM_RAVINO_VIJAJ_CHAT_ID } = process.env;
 
 // Per-merchant wallet-top-up-only routing to dedicated Telegram groups,
 // each instead of (not in addition to) the default chat. Failed-payout
@@ -39,6 +39,18 @@ const TOPUP_ROUTES = [
     // Atmoon (an earlier attempt routed it there in error, reverted).
     merchantIds: new Set([
       'MER_AACC5365BC9F', // BABA ENTERPRISES
+    ]),
+  },
+  {
+    label: 'Paynix: Ravino and Vijaj',
+    chatId: TELEGRAM_RAVINO_VIJAJ_CHAT_ID,
+    // Added 2026-08-13 per explicit request — one shared group for both
+    // merchants (portal login names GuriFashion/TheHyperMarshal, but the
+    // reseller-portal legal names — and this group's own name — are
+    // RAVINO/VIJAJ TRADERS PRIVATE LIMITED).
+    merchantIds: new Set([
+      'MER_B3DE4FC343D8', // RAVINO TRADERS PRIVATE LIMITED (TheHyperMarshal)
+      'MER_59AE1E1BE1A6', // VIJAJ TRADERS PRIVATE LIMITED (GuriFashion)
     ]),
   },
 ];
