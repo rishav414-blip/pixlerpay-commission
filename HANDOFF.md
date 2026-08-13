@@ -1,7 +1,7 @@
 
 # Handoff — PixlerPay / Paynix Commission Dashboard
 
-Last updated: 2026-08-12 (3 new merchants onboarded — Parakeet/Baba/Suraj Wellness; wallet-log scraper partial-read bug fixed; Drive API key rotated after a Google bot-detection block broke the live dashboard, longer-term proxy fix planned but not built — see "Merchant onboarding, wallet-scraper partial-read bug, and Drive API key rotation" below; also: session persistence + login-failure backoff/critical-alert for merchant-portal logins; suspended-merchant misdiagnosis corrected; PixlerPay-side tracking removed from refresh.yml — this pipeline now concentrates on Paynix only; health-check Telegram now CRITICAL-only — see "Session persistence, login-failure alerting, and Paynix-only refocus" below; also: `fill-master-payout-detail.mjs` found still using the old pre-OTP login and fixed, 3 Atmoon-merchant payout IDs looked up and backfilled into the Master reconciliation sheet — see "Atmoon-merchant payout check + master-sheet backfill" below)
+Last updated: 2026-08-13 (project-wide reliability pass — first automated test suite, upload-to-drive.js per-file error isolation, parseWalletTimestamp deduplicated with a drift guard, timeout added to auto-rerun-failed.yml, scratch-output files gitignored; a third external cron-job.org job added for health-check.yml, closing the last workflow still on GitHub's unreliable native `schedule` — all three workflows now run every ~5-15 min, confirmed live; see "Reliability pass" and the Automation section's cron note below. Before that, same day: 3 new merchants onboarded — Parakeet/Baba/Suraj Wellness; wallet-log scraper partial-read bug fixed; Drive API key rotated after a Google bot-detection block broke the live dashboard, longer-term proxy fix planned but not built — see "Merchant onboarding, wallet-scraper partial-read bug, and Drive API key rotation" below; also: session persistence + login-failure backoff/critical-alert for merchant-portal logins; suspended-merchant misdiagnosis corrected; PixlerPay-side tracking removed from refresh.yml — this pipeline now concentrates on Paynix only; health-check Telegram now CRITICAL-only — see "Session persistence, login-failure alerting, and Paynix-only refocus" below; also: `fill-master-payout-detail.mjs` found still using the old pre-OTP login and fixed, 3 Atmoon-merchant payout IDs looked up and backfilled into the Master reconciliation sheet — see "Atmoon-merchant payout check + master-sheet backfill" below)
 
 ## What this project is
 
@@ -84,33 +84,39 @@ testing started within ~9 seconds — only `schedule`-triggered runs are
 delayed, so `workflow_dispatch` itself is reliable, the internal cron
 queue is what's throttled.
 
-**Fix in progress, chosen approach**: an external free cron service
-(cron-job.org) calling GitHub's REST API to trigger `workflow_dispatch`
-on a real schedule, bypassing GitHub's internal `schedule` queue entirely
-(dispatch-triggered runs are not subject to the same delay). Requires:
-1. A fine-grained GitHub PAT scoped to only this repo, only
-   `Actions: Read and write` (created via
-   github.com/settings/tokens?type=beta, not yet done as of this writing).
-2. Two cron-job.org jobs (free account, not yet created as of this
-   writing), each a `POST` to
+**Fixed**: an external free cron service (cron-job.org) calls GitHub's
+REST API to trigger `workflow_dispatch` on a real schedule, bypassing
+GitHub's internal `schedule` queue entirely (dispatch-triggered runs
+aren't subject to the same delay). Live setup:
+1. A fine-grained GitHub PAT scoped to only this repo, `Actions: Read and
+   write` permission (github.com/settings/tokens?type=beta).
+2. Three cron-job.org jobs (one per workflow), each a `POST` to
    `https://api.github.com/repos/rishav414-blip/pixlerpay-commission/actions/workflows/<workflow-file>/dispatches`
-   with header `Authorization: Bearer <PAT>` and body `{"ref":"master"}`
-   — one per workflow, at 15-min and 30-min intervals respectively.
-3. Once confirmed firing reliably, the `schedule:` blocks in both
-   workflow YAML files can be removed (or left as a redundant fallback —
-   harmless either way since they're additive, not conflicting).
+   with headers `Authorization: Bearer <PAT>` / `Accept:
+   application/vnd.github+json` / `Content-Type: application/json` and
+   body `{"ref":"master"}` — `refresh.yml` and `wallet-alert.yml` set up
+   earlier (see run history for actual cadence, roughly 5-15 min); the
+   third, for `health-check.yml` at a 15-min interval, added and
+   confirmed firing 2026-08-13 (verified both a manual `gh workflow run`
+   test and the cron's own automatic `workflow_dispatch` firing ~12 min
+   later — see run IDs `31669897386` / `31670565024`).
+3. The `schedule:` blocks in all three workflow YAML files are left in
+   place as a redundant, harmless fallback (additive, not conflicting)
+   rather than removed.
 
-**Until that's done**, treat the real cadence as "roughly hourly,
-sometimes much longer overnight" rather than 15/30 min — this affects how
-fresh the dashboard data and alerts actually are day to day.
+Real cadence as of 2026-08-13: all three workflows fire every ~5-15
+minutes via the external cron, not the "roughly hourly, sometimes 3+
+hours overnight" native-`schedule` cadence this section used to describe.
 
-**Known side-effect of the above, not yet fixed**: the dashboard's
-"stale" badge threshold (`docs/index.html`, `STALE_THRESHOLD_MS`) is set
-to 20 minutes, which assumed the configured 15/30 min cadence would
-roughly hold. Given the real ~60-90+ min cadence, the badge now shows
-"stale" most of the time even when the pipeline is behaving normally.
-Should be raised (e.g. to 90 min) or reconciled once the external-cron fix
-lands and real cadence is known.
+**Stale-badge threshold reconciled 2026-08-13**: the dashboard's "stale"
+badge (`docs/index.html`, `STALE_THRESHOLD_MS`, 20 min) was originally
+sized for the intended-but-unmet 15/30 min cadence, then left showing
+"stale" almost constantly during the long stretch when real cadence was
+~60-90+ min via GitHub's unreliable native `schedule`. Now that the
+external-cron fix above is confirmed live (~5-15 min real cadence across
+all three workflows), 20 minutes is a reasonable threshold again —
+no change needed unless it starts flapping true/false on normal jitter,
+in which case widen it slightly rather than remove it.
 
 **Credentials live in GitHub Actions encrypted secrets**, reconstructed to
 files at the start of each run (nothing sensitive is committed):
@@ -822,6 +828,84 @@ confirmed still present in this session's own health-check verification
 runs — neither was investigated or fixed this session, still flagged for
 whoever picks this up next.
 
+## Reliability pass: tests, isolated uploads, closing the cron gap, 2026-08-13
+
+Follow-on session, working from a "suggest improvements, then implement
+them" request. Surveyed the whole project for gaps beyond what the
+2026-08-11/12 sessions above already fixed, presented a prioritized list,
+then implemented the greenlit batch — verified locally and against live
+CI before considering anything done (per explicit "make sure no data
+points gets missed and everything runs perfectly").
+
+**Findings acted on:**
+
+1. **`.gitignore`**: added `data/_*.json` — ad-hoc scratch-script outputs
+   (e.g. `_master-payout-status-check.json`, `_refund-crosscheck-result.json`
+   from concurrent sessions' diagnostic scripts) contain real payout/merchant
+   data and weren't excluded, so a careless `git add -A` could have swept
+   them into a commit.
+2. **`auto-rerun-failed.yml`**: added `timeout-minutes: 5` — was the only
+   workflow in the repo without an explicit cap, inheriting GitHub's
+   360-minute default for what's a single `gh run rerun` API call.
+3. **`upload-to-drive.js`**: collapsed 8 near-identical
+   `if (fs.existsSync(X)) { await uploadFile(...) }` blocks into one
+   data-driven `FILE_SPECS` array. More importantly, isolated each
+   upload in its own try/catch — previously a single failed upload threw
+   out of the sequential `await` chain and silently skipped every file
+   after it in the list; now every file is attempted regardless, failures
+   are collected and reported, and the exit code still reflects failure.
+   Verified live twice: a wallet-alert.yml run correctly uploaded 2/2
+   files in its scope, a refresh.yml run correctly uploaded 5/5 to their
+   exact existing Drive file IDs (no accidental new-file creation) — 0
+   failures either time.
+4. **`parseWalletTimestamp` deduplication**: extracted the canonical copy
+   to `scripts/lib/wallet-timestamp.js` (`telegram-alert.js` now imports
+   it instead of keeping its own copy). `docs/index.html` and
+   `docs/paynix-atmoon.html` keep their own inline copies — no build step
+   exists in this project for the browser to import a Node module — but
+   `test/wallet-timestamp.test.js` now extracts each HTML file's copy via
+   regex and behaviorally compares it against the canonical module for a
+   shared set of inputs. Proven to actually work, not just pass trivially:
+   deliberately broke one HTML copy (`hh += 12` → `hh += 13`), confirmed
+   the test failed with a clear diff, then restored the original and
+   confirmed it passed again.
+5. **First test suite in this repo**: `test/commission-math.test.js` (15
+   cases — margin/AK/Ansh commission math, flat-vs-percentage bands,
+   rate-history resolution) and `test/wallet-timestamp.test.js` (6 cases,
+   including the drift guard above), using Node's built-in `node --test`
+   runner — zero new dependencies. Required exporting
+   `calculate-paynix-commission.js`'s previously-unexported pure functions
+   and guarding its `main()` behind an entry-point check so the module is
+   safely importable without triggering the full script (file reads,
+   Drive network calls, `process.exit`). **Bug caught before it shipped**:
+   the entry-point guard's first version used a naive
+   `` `file://${process.argv[1]}` `` string comparison — this silently
+   breaks on Windows (backslashes + missing percent-encoding never equal
+   `import.meta.url`), which would have made `main()` never run when the
+   script was executed directly on this Windows dev machine. Fixed with
+   `pathToFileURL` and re-verified the script's normal output was
+   byte-identical before/after.
+6. **`.github/workflows/test.yml`**: runs `npm test` on every push.
+   Deliberately independent of the scheduled pipelines (no secrets, no
+   `schedule:` trigger) so it can only add coverage, never affect
+   `refresh.yml`/`wallet-alert.yml`/`health-check.yml`'s own reliability.
+   Confirmed live: 21/21 tests passing in CI on the first push.
+
+**Closed the last workflow still on GitHub's unreliable native `schedule`**:
+`health-check.yml` had been running on GitHub's native `schedule` trigger
+(confirmed unreliable elsewhere in this doc — best-effort, often
+60-90+ min late) while `refresh.yml` and `wallet-alert.yml` already had
+external cron-job.org jobs. Walked the user through cloning an existing
+cron-job.org job (same PAT, same header shape) and pointing a new one at
+`health-check.yml`'s `workflow_dispatch` endpoint on a 15-min interval.
+Verified live: a manual `gh workflow run` test succeeded
+(`31669897386`), then the cron's own automatic dispatch fired
+successfully ~12 minutes later (`31670565024`), confirming the setup
+actually works end-to-end, not just that the workflow itself is healthy.
+Updated the Automation section above and closed known-limitations items
+1 and 8 (both were about this same unreliable-cadence problem) — all
+three workflows now run on a real ~5-15 min cadence.
+
 ## Master reconciliation sheet spot-check, 2026-08-10
 
 User pasted a screenshot of 14 `PAY_OUT_*` IDs (from an unspecified upstream
@@ -1416,7 +1500,7 @@ Individual steps can also be run separately (`npm run download-report`, `npm run
 
 ## Known limitations / not-yet-done
 
-1. **Scheduled automation cadence is unreliable — see the diagnosis in the Automation section above.** GitHub's `schedule` trigger delivers roughly 10-13% of the configured 15/30-min frequency; real cadence is ~hourly, sometimes 3+ hours overnight. Fix chosen (external cron via cron-job.org → `workflow_dispatch` API) but not yet implemented as of this writing — needs a fine-grained PAT created and two cron-job.org jobs configured (steps documented above).
+1. ~~Scheduled automation cadence is unreliable~~ — **closed 2026-08-13.** GitHub's native `schedule` trigger is still unreliable (documented in the Automation section above, kept only as a redundant fallback), but all three workflows now run on a real ~5-15 min cadence via external cron-job.org jobs hitting the `workflow_dispatch` API instead.
 2. **"Refresh" buttons on the dashboard only re-fetch the latest Drive snapshot** — they cannot trigger a brand-new live scrape synchronously on click, because GitHub Pages is a static site with no backend, and GitHub Actions workflows aren't instant/synchronous from a browser click. Genuine "click → scrape happens right now, wait, see fresh data" still needs a real server (VM) or a more involved workflow-dispatch + polling setup.
    - **Status:** not built. A VM remains the option if true instant on-demand refresh is ever needed.
 3. **N V CONNECT ACROSS PRIVATE LIMITED (PixlerPay)** — automation fails; its "DT and Payout" combined solution type has a different portal layout (the "Payouts Transaction" nav link isn't found, times out after 30s). Not fixed. Workaround: `data/manual-transactions.json` has one manual entry (₹50,00,000 on 2026-07-02 → ₹10,000 commission at 0.20% margin) added by the user; add more entries there in the same shape as needed.
@@ -1424,7 +1508,7 @@ Individual steps can also be run separately (`npm run download-report`, `npm run
 5. **Paynix's aggregate "Wallet Change" column is still inferred from balance deltas** between runs (current − previous), not a real ledger — this is separate from (and coarser than) the per-merchant "Load Requests" log, which IS a real log for the 9 merchants with credentials.
 6. **One pre-existing scraping quirk, not yet fixed**: at least one failed payout's `reason` field scraped as the literal string `"FAILED"` instead of a real gateway message — a minor regex miss in `scrapeFailedPayouts()`'s reason-extraction pattern. Low priority, cosmetic (doesn't affect the commission math), noticed while testing Telegram alert formatting.
 7. **~~Only 9 of 13 Paynix merchants have merchant-portal logins~~ — closed 2026-08-02.** Now 15 merchants have logins (added Elleaura, VIKZONE, VYSHIKAX, VELCYNTRA, ZYPHERON, Define Enterprises). Remaining gap: APAS TECH POINT, PPAY SOLUTION, Global Books Trading have no login — but all 3 are now `hidden` in the rate card anyway, so this is moot unless they're un-hidden later. Add credentials in the same JSON shape (and update the `PAYNIX_MERCHANT_LOGINS` GitHub secret) if that happens.
-8. **Dashboard's stale-badge threshold (20 min) doesn't match real automation cadence** (~60-90+ min) — see the Automation section's note. Should be reconciled once item 1 is fixed and real cadence is known.
+8. ~~Dashboard's stale-badge threshold doesn't match real automation cadence~~ — **closed 2026-08-13** alongside item 1; see the Automation section's note.
 9. **One transient CI failure observed** (of ~20 runs so far): `wallet-alert.yml` run on 2026-07-11 23:35 UTC failed because the Paynix reseller login page timed out twice in a row (60s each, via the retry already built into `gotoWithRetry`). Self-healed on the next run — not a recurring pattern, just noted for awareness. If it becomes frequent, the retry timeout/count may need tuning.
 
 ## Key files
