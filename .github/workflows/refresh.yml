@@ -110,17 +110,16 @@ jobs:
         continue-on-error: true
         run: npm run download-paynix
 
-      # Wallet-log/top-up scraping is now wallet-alert.yml's exclusive
-      # responsibility (was: also run here). Both workflows used to write
-      # walletLogs into the same shared paynix-results.json — that's fine
-      # for walletLogs specifically, but running download-paynix-wallets
-      # here too added no value (wallet-alert.yml already covers it on a
-      # much faster cadence) while adding scrape time to every refresh run.
-      - name: Download PixlerPay merchant (Paynix) data
-        env:
-          PAYNIX_HEADFUL: 'false'
-        continue-on-error: true
-        run: npm run download-pixlerpay-merchant
+      # PixlerPay's own Paynix merchant account (download-pixlerpay-merchant)
+      # removed from this workflow 2026-08-13 per explicit request — held
+      # intentionally, same as the 18-account PixlerPay commission removed
+      # 2026-08-11 above. website/pixlerpay-merchant-results.json stays
+      # frozen at whatever it last was; upload-to-drive.js still re-uploads
+      # it unchanged each run. To bring this back, restore the step (see
+      # git history around 2026-08-13 for the exact block) — `npm run
+      # download-pixlerpay-merchant`, continue-on-error: true — and also
+      # re-add "PixlerPay Merchant" to health-check.js's freshness-check
+      # source list (removed in the same commit).
 
       # This step's chromium.launch() consistently crashed at startup
       # ("Missing X server or $DISPLAY") in CI, 100% reproducible, even

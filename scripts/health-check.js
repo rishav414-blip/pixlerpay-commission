@@ -29,7 +29,6 @@ import { fetchPreviousFromDrive } from './lib/drive-fetch.js';
 const {
   GOOGLE_DRIVE_API_KEY,
   GOOGLE_DRIVE_PAYNIX_FILE_ID,
-  GOOGLE_DRIVE_PIXLERPAY_MERCHANT_FILE_ID,
   GOOGLE_DRIVE_PAYNIX_COMMISSION_FILE_ID,
   GOOGLE_DRIVE_PAYNIX_WALLETLOG_FILE_ID,
   TELEGRAM_BOT_TOKEN,
@@ -102,12 +101,17 @@ async function checkFreshnessAndData() {
   // request (this pipeline now concentrates on the Paynix system only),
   // so it's *supposed* to stay frozen/stale from here on. Checking it
   // would just have produced a permanent, unfixable CRITICAL alert for
-  // something working exactly as intended. "PixlerPay Merchant" below is
-  // unrelated — that's PixlerPay's own account on Paynix, still actively
-  // refreshed, part of the Paynix system being kept.
+  // something working exactly as intended.
+  //
+  // "PixlerPay Merchant" (PixlerPay's own account on Paynix,
+  // GOOGLE_DRIVE_PIXLERPAY_MERCHANT_FILE_ID) removed the same way
+  // 2026-08-13 — also intentionally held now, per explicit request after
+  // this exact check correctly flagged it CRITICAL (119h stale) and the
+  // response was "that's fine, stop refreshing it and stop checking it,"
+  // not "fix the staleness." Same reasoning as above: checking it would
+  // just produce a permanent alert for an intentional state.
   const sources = [
     { label: 'Paynix reseller', fileId: GOOGLE_DRIVE_PAYNIX_FILE_ID, tsField: 'scrapedAt' },
-    { label: 'PixlerPay Merchant', fileId: GOOGLE_DRIVE_PIXLERPAY_MERCHANT_FILE_ID, tsField: 'scrapedAt' },
     { label: 'Paynix commission', fileId: GOOGLE_DRIVE_PAYNIX_COMMISSION_FILE_ID, tsField: 'generatedAt' },
     { label: 'Paynix wallet log', fileId: GOOGLE_DRIVE_PAYNIX_WALLETLOG_FILE_ID, tsField: 'walletLogsGeneratedAt' },
   ];
