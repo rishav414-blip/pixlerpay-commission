@@ -2,8 +2,9 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseWalletTimestamp } from './lib/wallet-timestamp.js';
+import { getSuspendedMerchantIds } from './lib/suspended-merchants.js';
 
-const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALERT_SECTIONS, TELEGRAM_ATMOON_CHAT_ID, TELEGRAM_BABA_CHAT_ID, TELEGRAM_RAVINO_VIJAJ_CHAT_ID } = process.env;
+const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALERT_SECTIONS, TELEGRAM_ATMOON_CHAT_ID, TELEGRAM_BABA_CHAT_ID, TELEGRAM_RAVINO_VIJAJ_CHAT_ID, GOOGLE_DRIVE_PAYNIX_FILE_ID, GOOGLE_DRIVE_API_KEY } = process.env;
 
 // Per-merchant wallet-top-up-only routing to dedicated Telegram groups,
 // each instead of (not in addition to) the default chat. Failed-payout
@@ -183,10 +184,29 @@ function buildPixlerMerchantMessage(d) {
 // run's retry will resend rather than the alert being lost.
 async function sendLoginFailureAlertsIfAny() {
   if (!fs.existsSync(SESSIONS_DIR)) return;
+
+  // A merchant that's since become suspended can leave a stale
+  // .failure.json sitting in the CI session cache (actions/cache, restored
+  // across runs) from before it was suspended — the scripts that actually
+  // attempt logins already skip suspended merchants entirely (see
+  // lib/suspended-merchants.js), so no *new* failure file is ever written
+  // for them, but an old un-alerted one can linger and get re-surfaced by
+  // a later cache restore. Confirmed 2026-08-13: alerts fired for
+  // ANTARIKSHA/SUVIKA/BITNEXY days after they'd been suspended and their
+  // login attempts stopped entirely. Delete these on sight rather than
+  // just skip-and-leave-them — otherwise the same stale file can resurface
+  // again on a future cache restore.
+  const suspendedIds = await getSuspendedMerchantIds(GOOGLE_DRIVE_PAYNIX_FILE_ID, GOOGLE_DRIVE_API_KEY);
+
   const toAlert = [];
   for (const f of fs.readdirSync(SESSIONS_DIR)) {
     if (!f.endsWith('.failure.json')) continue;
     const full = path.join(SESSIONS_DIR, f);
+    const merchantId = f.replace(/\.failure\.json$/, '');
+    if (suspendedIds.has(merchantId)) {
+      fs.unlinkSync(full);
+      continue;
+    }
     try {
       const state = JSON.parse(fs.readFileSync(full, 'utf-8'));
       if (!state.alerted) toAlert.push({ file: full, state });
