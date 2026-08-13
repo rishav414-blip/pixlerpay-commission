@@ -68,12 +68,33 @@ function titleCaseStatus(status) {
 // against api.paynix.co.in from whatever page (still on the dashboard,
 // same origin as when the token was issued) the auth flow left us on.
 async function scrapeWalletLog(page) {
+  // Bug found and fixed same day this API switch shipped: a bare fetch()
+  // inside page.evaluate has no default timeout — if a single merchant's
+  // request hangs (bad network moment, not an outright error), the whole
+  // CI job hangs with it, since Node's own `await page.evaluate(...)`
+  // just waits for the browser-side promise to settle, which never
+  // happens on its own. Confirmed live: the first production run after
+  // this rewrite landed hung for the full 15-minute job timeout instead
+  // of the usual ~1-2 min for all merchants combined, and only died
+  // because GitHub Actions killed the job, not because anything in this
+  // script gave up. AbortController + a 15s cap, mirroring the timeout
+  // the old DOM-wait code always had implicitly via Playwright's own
+  // waitFor(), gives one merchant's bad network moment the same bounded
+  // failure the outer per-merchant try/catch (in run() below) already
+  // expects and handles — instead of taking the whole run down with it.
   const result = await page.evaluate(async (perPage) => {
     const token = localStorage.getItem('paynix_access_token');
-    const res = await fetch(`https://api.paynix.co.in/api/v1/merchant/portal/wallet/load-requests?page=1&per_page=${perPage}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    return res.json();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    try {
+      const res = await fetch(`https://api.paynix.co.in/api/v1/merchant/portal/wallet/load-requests?page=1&per_page=${perPage}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
+      return await res.json();
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }, TOP_N);
 
   if (!result?.success) {
