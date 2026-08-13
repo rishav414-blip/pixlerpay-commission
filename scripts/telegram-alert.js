@@ -99,16 +99,26 @@ function capWalletEntries(entries) {
     .slice(0, MAX_WALLET_ENTRIES_PER_MERCHANT);
 }
 
+// Only low-balance failures are alert-worthy, per explicit request
+// 2026-08-11 — other failure reasons (gateway rate-limiting, etc.) are
+// still captured in failedPayouts/newFailedPayouts for the dashboard, just
+// not pushed to Telegram. Observed reason text: "Gateway hdfc (200): Low
+// balance to make this request." A bare "FAILED" (regex-miss fallback in
+// download-paynix.js's scrape) has no confirmed cause, so it's excluded
+// too rather than assumed to be a balance issue.
+const LOW_BALANCE_REASON_RE = /low balance/i;
+
 function buildFailedPayoutMessage(d) {
-  if (!d.newFailedPayouts || d.newFailedPayouts.length === 0) return '';
+  const lowBalanceFailures = (d.newFailedPayouts || []).filter((f) => f.reason && LOW_BALANCE_REASON_RE.test(f.reason));
+  if (lowBalanceFailures.length === 0) return '';
   const lines = [];
   // Sort newest-first (same DD/MM/YY timestamp format as wallet-log
   // entries — plain scrape order isn't reliably newest-first) and cap
   // at 10, so a burst of failures doesn't produce an unreadable wall
   // of text in one Telegram message.
-  const sorted = [...d.newFailedPayouts].sort((a, b) => parseWalletTimestamp(b.createdAt) - parseWalletTimestamp(a.createdAt));
+  const sorted = [...lowBalanceFailures].sort((a, b) => parseWalletTimestamp(b.createdAt) - parseWalletTimestamp(a.createdAt));
   const shown = sorted.slice(0, 10);
-  lines.push(`⚠ <b>${d.newFailedPayouts.length} new failed payout(s)</b>`);
+  lines.push(`⚠ <b>${lowBalanceFailures.length} new failed payout(s) — low balance</b>`);
   for (const f of shown) {
     const amount = f.amount != null ? `₹${f.amount.toLocaleString('en-IN')}` : '-';
     const merchant = f.merchantName ? f.merchantName.split(' ')[0] : '-';
