@@ -4,7 +4,7 @@ import path from 'node:path';
 import { parseWalletTimestamp } from './lib/wallet-timestamp.js';
 import { getSuspendedMerchantIds } from './lib/suspended-merchants.js';
 
-const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALERT_SECTIONS, TELEGRAM_ATMOON_CHAT_ID, TELEGRAM_BABA_CHAT_ID, TELEGRAM_RAVINO_VIJAJ_CHAT_ID, GOOGLE_DRIVE_PAYNIX_FILE_ID, GOOGLE_DRIVE_API_KEY } = process.env;
+const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALERT_SECTIONS, TELEGRAM_ATMOON_CHAT_ID, TELEGRAM_BABA_CHAT_ID, TELEGRAM_RAVINO_VIJAJ_CHAT_ID, TELEGRAM_DATSHA_CHAT_ID, GOOGLE_DRIVE_PAYNIX_FILE_ID, GOOGLE_DRIVE_API_KEY } = process.env;
 
 // Per-merchant wallet-top-up-only routing to dedicated Telegram groups,
 // each instead of (not in addition to) the default chat. Failed-payout
@@ -52,6 +52,14 @@ const TOPUP_ROUTES = [
     merchantIds: new Set([
       'MER_B3DE4FC343D8', // RAVINO TRADERS PRIVATE LIMITED (TheHyperMarshal)
       'MER_59AE1E1BE1A6', // VIJAJ TRADERS PRIVATE LIMITED (GuriFashion)
+    ]),
+  },
+  {
+    label: 'Paynix: DATSHA',
+    chatId: TELEGRAM_DATSHA_CHAT_ID,
+    // Added 2026-08-13 per explicit request — its own dedicated group.
+    merchantIds: new Set([
+      'MER_C4E3E8911BE5', // DATSHA SOLUTION PVT LTD
     ]),
   },
 ];
