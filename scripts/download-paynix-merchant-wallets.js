@@ -29,65 +29,65 @@ const TOP_N = 5;
 const { PAYNIX_HEADFUL, GOOGLE_DRIVE_PAYNIX_WALLETLOG_FILE_ID, GOOGLE_DRIVE_PAYNIX_FILE_ID, GOOGLE_DRIVE_API_KEY } = process.env;
 const headless = PAYNIX_HEADFUL !== 'true';
 
-function parseINR(s) {
-  if (!s) return 0;
-  const cleaned = String(s).replace(/[₹,\s−–-]/g, (m) => (m === '−' || m === '–' || m === '-' ? '-' : ''));
-  const n = Number(cleaned);
-  return isNaN(n) ? 0 : n;
+// IST has no DST, so a fixed +5:30 offset is safe — matches the format the
+// old DOM-scraped "Created" column produced ("13/08/26, 7:45 pm"), which
+// parseWalletTimestamp (lib/wallet-timestamp.js) and every stored baseline
+// entry still expect. Keeping this exact format is what let the API switch
+// below be a drop-in replacement instead of also needing to touch the
+// display/parsing code and re-normalize every already-stored entry.
+function formatIST(isoString) {
+  const istMs = new Date(isoString).getTime() + (5 * 60 + 30) * 60000;
+  const d = new Date(istMs);
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const yy = String(d.getUTCFullYear()).slice(-2);
+  let hh = d.getUTCHours();
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  const ap = hh >= 12 ? 'pm' : 'am';
+  hh = hh % 12 || 12;
+  return `${dd}/${mo}/${yy}, ${hh}:${mm} ${ap}`;
 }
 
+function titleCaseStatus(status) {
+  if (!status) return null;
+  return status.charAt(0) + status.slice(1).toLowerCase();
+}
+
+// Was DOM-table scraping ("Load Requests" table on /dashboard/wallet) —
+// switched 2026-08-13 to the same authenticated JSON API pattern already
+// used for payouts (download-paynix-merchant-reports.js), after a same-run
+// retry (added earlier the same day) still wasn't enough: VIJAJ TRADERS
+// PRIVATE LIMITED dropped its newest (₹20,50,000) load request from a live
+// CI scrape *again*, post-retry-fix, confirmed by comparing the live
+// Drive-uploaded baseline against a direct API check showing the entry
+// really existed. DOM-render timing is eliminated entirely this way — the
+// API response is the source of truth the DOM table itself was built from.
 // Assumes the page's context is already authenticated (see
 // getAuthenticatedContext in run() below, which handles login + session
-// reuse before calling this).
+// reuse before calling this) — no navigation needed, the fetch runs
+// against api.paynix.co.in from whatever page (still on the dashboard,
+// same origin as when the token was issued) the auth flow left us on.
 async function scrapeWalletLog(page) {
-  await page.goto('https://merchant.paynix.co.in/dashboard/wallet', { waitUntil: 'domcontentloaded' });
-
-  // The page has two tables — "Load Requests" (wallet top-ups: REQUEST ID,
-  // AMOUNT, METHOD, UTR, STATUS, CREATED) and "Transaction History" (full
-  // debit/credit ledger). Wallet-log entries here track top-up requests —
-  // both pending and approved show up here, not filtered by status — so
-  // target the Load Requests table specifically by its header text.
-  const table = page.locator('table').filter({ hasText: 'REQUEST ID' });
-  // Wait for the table itself to render (was: a blind fixed 2s delay,
-  // which raced the table's client-side data fetch on slower loads and
-  // intermittently read 0 rows from a still-empty table — confirmed
-  // 2026-08-08 as the cause of repeated false "new" wallet-top-up alerts
-  // for Emervex, whose real entries kept getting wiped from the baseline
-  // by these empty reads). Not a full fix by itself (a merchant with
-  // genuinely zero load requests still legitimately reads 0 rows here) —
-  // paired with the previous-baseline fallback in run() below.
-  await table.first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
-  await page.waitForTimeout(1000);
-  const rows = table.first().locator('tbody tr');
-  // Re-check once more before trusting a 0-row read, same pattern as
-  // download-paynix.js's failed-payout scraper — added 2026-08-13 after
-  // VIJAJ TRADERS PRIVATE LIMITED hit this exact render-timing miss 3
-  // times in one day (confirmed for real via a direct API check each
-  // time: the entries genuinely existed, the DOM table just hadn't
-  // finished rendering yet on the first read). The run()-level
-  // preserve-previous-baseline fallback below still catches a genuine
-  // 0-row merchant or a miss on both reads — this just cuts how often
-  // that fallback (which means a same-run miss, not just a delayed
-  // detection on some later run) has to fire at all.
-  let count = await rows.count();
-  if (count === 0) {
-    await page.waitForTimeout(2000);
-    count = await rows.count();
-  }
-  const entries = [];
-
-  for (let i = 0; i < Math.min(count, TOP_N); i++) {
-    const cells = await rows.nth(i).locator('td').evaluateAll((tds) => tds.map((td) => td.innerText.trim()));
-    if (cells.length < 6) continue;
-    entries.push({
-      requestId: cells[0] || null,
-      amount: parseINR(cells[1]),
-      method: cells[2] || null,
-      utr: cells[3] || null,
-      status: cells[4] || null,
-      createdAt: cells[5] || null,
+  const result = await page.evaluate(async (perPage) => {
+    const token = localStorage.getItem('paynix_access_token');
+    const res = await fetch(`https://api.paynix.co.in/api/v1/merchant/portal/wallet/load-requests?page=1&per_page=${perPage}`, {
+      headers: { Authorization: `Bearer ${token}` },
     });
+    return res.json();
+  }, TOP_N);
+
+  if (!result?.success) {
+    throw new Error(`wallet/load-requests API error: ${JSON.stringify(result?.error || result)}`);
   }
+
+  const entries = (result.data || []).map((r) => ({
+    requestId: r.request_id || null,
+    amount: Number(r.amount) || 0,
+    method: r.payment_method || null,
+    utr: r.utr || null,
+    status: titleCaseStatus(r.status),
+    createdAt: formatIST(r.created_at),
+  }));
   return entries;
 }
 
