@@ -228,49 +228,27 @@ async function run() {
         continue;
       }
       context = authed.context;
-      let page = authed.page;
+      const page = authed.page;
       console.log(`Scraping wallet log for ${login.merchantName}${authed.reused ? ' (reused session)' : ' (fresh login)'}...`);
-      let entries;
-      try {
-        entries = await scrapeWalletLog(page);
-      } catch (err) {
-        // A reused session's bearer token can be truly expired (not just
-        // stale-but-refreshable — see the comment on scrapeWalletLog for
-        // why waiting doesn't help here) while still having passed the
-        // page-level reuse check. Confirmed live 2026-08-13: 18 of 22
-        // merchants hit this in one run. The only real fix is a genuine
-        // fresh login — discard the stale session file (so this doesn't
-        // just get reused again next run) and retry once via a full
-        // login, same as a first-time or already-expired session would
-        // get. Only worth trying for a *reused* session — a session that
-        // was already a fresh login failing UNAUTHORIZED is a different,
-        // real problem retrying won't fix.
-        if (authed.reused && err.message.includes('UNAUTHORIZED')) {
-          console.warn(`  Reused session for ${login.merchantName} had an expired token — discarding it and retrying with a fresh login...`);
-          await context.close();
-          if (fs.existsSync(sessionFile)) fs.unlinkSync(sessionFile);
-          const freshAuthed = await getAuthenticatedContext(browser, {
-            sessionFile,
-            dashboardUrl: MERCHANT_DASHBOARD_URL,
-            contextOptions: { timezoneId: 'Asia/Kolkata' },
-            performLogin: loginWithStagger(login),
-            merchantLabel: login.merchantName,
-          });
-          if (freshAuthed.skipped) {
-            // Deleting the session file doesn't clear an unrelated
-            // login-failure backoff (a different file) that may already
-            // exist for this merchant from an earlier, genuine login
-            // failure — respect it rather than forcing another attempt.
-            context = undefined;
-            throw err;
-          }
-          context = freshAuthed.context;
-          page = freshAuthed.page;
-          entries = await scrapeWalletLog(page);
-        } else {
-          throw err;
-        }
-      }
+      // A same-day fresh-login-on-UNAUTHORIZED retry was tried and reverted
+      // here (2026-08-13): sounds correct in isolation — a reused session's
+      // token can genuinely be expired — but it recreates, at scale, the
+      // exact incident lib/paynix-merchant-login.js's own session-reuse
+      // mechanism was built to prevent (see its "VYSHIKAX" comment above
+      // getAuthenticatedContext): forcing a fresh OTP login every time a
+      // token check fails, on a 5-minute cron, tears through Paynix's
+      // ~15-minute OTP cooldown. Confirmed live: almost every merchant
+      // needed a fresh login on consecutive 5-minute runs instead of the
+      // intended "roughly once per session lifetime", and the run right
+      // after that hung for the full 15-minute job timeout — plausibly
+      // Paynix-side throttling in response. An UNAUTHORIZED (or any other)
+      // failure here just falls through to the existing
+      // preserve-previous-baseline handling below (via the outer catch) —
+      // occasionally stale data for a merchant until its session naturally
+      // gets detected as truly dead (redirects to /auth/login) and
+      // refreshed through the normal reuse-check path, not forced by
+      // anything in this script.
+      const entries = await scrapeWalletLog(page);
       const prevEntries = previousWalletLogs[login.merchantId];
       if (entries.length === 0 && prevEntries?.length > 0) {
         // A 0-row read when the previous run had real entries is far more
