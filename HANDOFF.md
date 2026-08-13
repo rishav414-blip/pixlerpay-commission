@@ -1,7 +1,7 @@
 
 # Handoff — PixlerPay / Paynix Commission Dashboard
 
-Last updated: 2026-08-13 (project-wide reliability pass — first automated test suite, upload-to-drive.js per-file error isolation, parseWalletTimestamp deduplicated with a drift guard, timeout added to auto-rerun-failed.yml, scratch-output files gitignored; a third external cron-job.org job added for health-check.yml, closing the last workflow still on GitHub's unreliable native `schedule` — all three workflows now run every ~5-15 min, confirmed live; see "Reliability pass" and the Automation section's cron note below. Before that, same day: 3 new merchants onboarded — Parakeet/Baba/Suraj Wellness; wallet-log scraper partial-read bug fixed; Drive API key rotated after a Google bot-detection block broke the live dashboard, longer-term proxy fix planned but not built — see "Merchant onboarding, wallet-scraper partial-read bug, and Drive API key rotation" below; also: session persistence + login-failure backoff/critical-alert for merchant-portal logins; suspended-merchant misdiagnosis corrected; PixlerPay-side tracking removed from refresh.yml — this pipeline now concentrates on Paynix only; health-check Telegram now CRITICAL-only — see "Session persistence, login-failure alerting, and Paynix-only refocus" below; also: `fill-master-payout-detail.mjs` found still using the old pre-OTP login and fixed, 3 Atmoon-merchant payout IDs looked up and backfilled into the Master reconciliation sheet — see "Atmoon-merchant payout check + master-sheet backfill" below)
+Last updated: 2026-08-13 (PixlerPay's own Paynix merchant account paused too — health-check's new cron correctly caught it 119h stale, held intentionally rather than fixed, same pattern as the 18-account PixlerPay commission paused 2026-08-11; only the Paynix reseller-network tab is now actively refreshed — see "Hold PixlerPay's own Paynix merchant account too" below. Earlier the same day: project-wide reliability pass — first automated test suite, upload-to-drive.js per-file error isolation, parseWalletTimestamp deduplicated with a drift guard, timeout added to auto-rerun-failed.yml, scratch-output files gitignored; a third external cron-job.org job added for health-check.yml, closing the last workflow still on GitHub's unreliable native `schedule` — all three workflows now run every ~5-15 min, confirmed live; see "Reliability pass" and the Automation section's cron note below. Before that, same day: 3 new merchants onboarded — Parakeet/Baba/Suraj Wellness; wallet-log scraper partial-read bug fixed; Drive API key rotated after a Google bot-detection block broke the live dashboard, longer-term proxy fix planned but not built — see "Merchant onboarding, wallet-scraper partial-read bug, and Drive API key rotation" below; also: session persistence + login-failure backoff/critical-alert for merchant-portal logins; suspended-merchant misdiagnosis corrected; PixlerPay-side tracking removed from refresh.yml — this pipeline now concentrates on Paynix only; health-check Telegram now CRITICAL-only — see "Session persistence, login-failure alerting, and Paynix-only refocus" below; also: `fill-master-payout-detail.mjs` found still using the old pre-OTP login and fixed, 3 Atmoon-merchant payout IDs looked up and backfilled into the Master reconciliation sheet — see "Atmoon-merchant payout check + master-sheet backfill" below)
 
 ## What this project is
 
@@ -11,22 +11,35 @@ publishes a live, tabbed web dashboard:
 - **PixlerPay tab** — logs into 18 individual merchant accounts, downloads
   payout reports, calculates commission as margin (Onboarded % − Reseller %)
   per the Google Sheet rate card. One manual override for a client whose
-  automation is broken (see Known Limitations).
+  automation is broken (see Known Limitations). **⏸ Paused 2026-08-11**:
+  `refresh.yml` no longer refreshes this — data is frozen at whatever it
+  last showed. See "Session persistence, login-failure alerting, and
+  Paynix-only refocus" below.
 - **Paynix tab** — logs into one reseller account (covers 13 merchants),
   scrapes commission (computed server-side by Paynix, no math needed),
   merchant wallet balances, failed payouts, and (for 9 of the 13 merchants
   — see Known Limitations) each merchant's own top-5 wallet "Load Requests"
-  log (top-ups, both pending and approved).
+  log (top-ups, both pending and approved). **Actively refreshed** — this
+  is the one tab still live; the other two are intentionally paused (see
+  their own notes).
 - **PixlerPay Merchant tab** — logs into PixlerPay's *own* Paynix merchant
   account (`info@pixlerpay.com` on `merchant.paynix.co.in`, unrelated to
   the 13 reseller merchants above), exports its full payout history, and
   computes commission with a flat rule: 0.05% of amount for payouts over
   ₹1000, flat ₹1 at/below ₹1000 — applied to SUCCESS payouts only. Also
   shows this account's own wallet balance + top-5 wallet "Load Requests" log.
+  **⏸ Paused 2026-08-13**: `refresh.yml` no longer refreshes this either —
+  health-check's cron flagged it CRITICAL (119h stale) right after going
+  live, and the response was to hold it intentionally rather than fix the
+  staleness. See "Hold PixlerPay's own Paynix merchant account too" below.
 
-All three feed a single live dashboard hosted on GitHub Pages, reading data
-from Google Drive. **The whole pipeline now runs automatically** via
-GitHub Actions (see below) — no manual `npm run all` needed day to day.
+Only the Paynix tab is actively refreshed as of 2026-08-13 — the pipeline
+now genuinely concentrates on the Paynix system only, per the explicit
+request that started the 2026-08-11 refocus. All three tabs still feed
+the same live dashboard hosted on GitHub Pages, reading data from Google
+Drive — the paused ones just show their last-known data indefinitely.
+**The whole pipeline now runs automatically** via GitHub Actions (see
+below) — no manual `npm run all` needed day to day.
 
 ## Live URLs
 
@@ -46,13 +59,14 @@ Two scheduled workflows, both using GitHub-hosted runners (free/unlimited
 minutes since this repo is public):
 
 - **`.github/workflows/refresh.yml`** — every 30 min (`*/30 * * * *`) +
-  manual "Run workflow" button. **Correction, 2026-08-11**: no longer runs
-  the 18 PixlerPay accounts — that scrape+calc was removed per explicit
-  request, see "Session persistence, login-failure alerting, and
-  Paynix-only refocus" below (point 6). Currently runs: Paynix reseller +
-  merchant wallet-log/report scrapes, PixlerPay's own Paynix merchant
-  account (full payout export), uploads everything to Drive, then runs the
-  Telegram alert step. Takes ~5-10 min.
+  manual "Run workflow" button. **Correction, 2026-08-11 + 2026-08-13**: no
+  longer runs the 18 PixlerPay accounts (removed 2026-08-11, see "Session
+  persistence, login-failure alerting, and Paynix-only refocus" below,
+  point 6) or PixlerPay's own Paynix merchant account (removed 2026-08-13,
+  see "Hold PixlerPay's own Paynix merchant account too" below) — both
+  held intentionally, not broken. Currently runs: Paynix reseller +
+  merchant wallet-log/report scrapes, uploads everything to Drive, then
+  runs the Telegram alert step. Takes ~5-10 min.
   **Added 2026-07-13**: now also exports full payout history from the same
   9 Paynix merchant portals (`download-paynix-merchant-reports`, for the
   margin+AK commission calc) — some of these accounts have thousands of
@@ -906,6 +920,42 @@ Updated the Automation section above and closed known-limitations items
 1 and 8 (both were about this same unreliable-cadence problem) — all
 three workflows now run on a real ~5-15 min cadence.
 
+## Hold PixlerPay's own Paynix merchant account too, 2026-08-13
+
+Immediate follow-on to the health-check cron section above — its very
+first live run (right after going live) correctly flagged a genuine
+issue: `[CRITICAL] PixlerPay Merchant: last updated 119.2h ago`. This is
+PixlerPay's *own* Paynix merchant account (the "PixlerPay Merchant tab"
+— a different thing from the 13 reseller merchants, and a different
+thing from the 18-account PixlerPay commission already paused
+2026-08-11). It had genuinely gone stale for ~5 days.
+
+**User's call**: hold this data source intentionally too, same as the
+18-account one — not investigate/fix the staleness. Applied the identical
+pattern as the earlier pause:
+- `refresh.yml`: removed the "Download PixlerPay merchant (Paynix) data"
+  step (`download-pixlerpay-merchant`). `website/pixlerpay-merchant-results.json`
+  stays frozen; `upload-to-drive.js` still re-uploads it unchanged each run.
+- `health-check.js`: removed "PixlerPay Merchant" from the freshness-check
+  `sources` array (and the now-unused `GOOGLE_DRIVE_PIXLERPAY_MERCHANT_FILE_ID`
+  import) — checking an intentionally-frozen source would otherwise
+  produce a permanent, unfixable CRITICAL alert forever.
+
+Verified live: re-triggered health-check immediately after — CRITICAL
+gone, down to the one pre-existing unrelated warning (RAAMIRO/PARAKEET
+no-data, already open from an earlier session). Re-triggered `refresh.yml`
+too — ran clean without the removed step, "Download PixlerPay merchant
+(Paynix) data" no longer appears in its step list.
+
+**Net effect**: as of 2026-08-13, only the Paynix reseller-network tab is
+actively refreshed. Both PixlerPay-side tabs (the 18-account one and
+PixlerPay's own merchant account) are intentionally frozen — this is now
+the actual, complete scope of "this pipeline concentrates on the Paynix
+system only," not just the 18-account part of it. To bring either back,
+see the comments left in `refresh.yml` at the point each step was removed
+— they name the exact `npm run` command and note what to also re-add to
+`health-check.js`.
+
 ## Master reconciliation sheet spot-check, 2026-08-10
 
 User pasted a screenshot of 14 `PAY_OUT_*` IDs (from an unspecified upstream
@@ -1453,6 +1503,14 @@ extract the pure `build*Message()` functions into a separate
 importable module — don't `import()` the script itself.
 
 ## One command to refresh everything (still works locally too)
+
+**Note (2026-08-13)**: this `npm run all` chain (and steps 1, 2, 5 below
+specifically) is no longer what CI actually runs — `refresh.yml` dropped
+steps 1-2 (2026-08-11) and step 5 (2026-08-13), both held intentionally
+(see the two sections on pausing PixlerPay-side tracking above). This
+section still describes what running everything manually does locally,
+which is unchanged and still useful for a one-off manual full refresh —
+just don't expect CI to be doing all of this automatically anymore.
 
 ```powershell
 npm run all
