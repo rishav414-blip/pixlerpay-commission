@@ -59,7 +59,21 @@ async function scrapeWalletLog(page) {
   await table.first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
   await page.waitForTimeout(1000);
   const rows = table.first().locator('tbody tr');
-  const count = await rows.count();
+  // Re-check once more before trusting a 0-row read, same pattern as
+  // download-paynix.js's failed-payout scraper — added 2026-08-13 after
+  // VIJAJ TRADERS PRIVATE LIMITED hit this exact render-timing miss 3
+  // times in one day (confirmed for real via a direct API check each
+  // time: the entries genuinely existed, the DOM table just hadn't
+  // finished rendering yet on the first read). The run()-level
+  // preserve-previous-baseline fallback below still catches a genuine
+  // 0-row merchant or a miss on both reads — this just cuts how often
+  // that fallback (which means a same-run miss, not just a delayed
+  // detection on some later run) has to fire at all.
+  let count = await rows.count();
+  if (count === 0) {
+    await page.waitForTimeout(2000);
+    count = await rows.count();
+  }
   const entries = [];
 
   for (let i = 0; i < Math.min(count, TOP_N); i++) {
