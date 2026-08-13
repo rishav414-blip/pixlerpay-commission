@@ -464,5 +464,31 @@
     "ansPct": 0.3,
     "ansFlatBelow1000": 1,
     "group": null
+  },
+  {
+    "sno": 39,
+    "clientName": "RAVINO TRADERS PRIVATE LIMITED",
+    "merchantId": "MER_B3DE4FC343D8",
+    "resellerPct": 0.7,
+    "resellerFlatBelow1000": 10,
+    "onboardedPct": 1.0,
+    "onboardedFlatBelow1000": 12,
+    "akPct": 0.1,
+    "ansPct": null,
+    "ansFlatBelow1000": null,
+    "group": null
+  },
+  {
+    "sno": 40,
+    "clientName": "VIJAJ TRADERS PRIVATE LIMITED",
+    "merchantId": "MER_59AE1E1BE1A6",
+    "resellerPct": 0.7,
+    "resellerFlatBelow1000": 10,
+    "onboardedPct": 1.0,
+    "onboardedFlatBelow1000": 12,
+    "akPct": 0.1,
+    "ansPct": null,
+    "ansFlatBelow1000": null,
+    "group": null
   }
 ]
