@@ -39,6 +39,40 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+// Same class of issue download-paynix.js's own gotoWithRetry was built for
+// (see its comment: "the reseller portal's first page load is sometimes
+// slow to respond... from a distant GitHub Actions runner"), never applied
+// here — confirmed 2026-08-14 hitting the per-merchant login flow too:
+// health-check reported Baba Enterprises, RAVINO TRADERS, Parakeet
+// Engineering, and Suraj Wellness all failing with a bare 30s
+// page.goto timeout navigating to /auth/login, and the user's own manual
+// retry ~2 minutes later succeeded — a transient network/server-side slow
+// window, not a real per-account problem. Retry once quickly (10s, catches
+// a brief blip) then once after the ~2min gap that's actually confirmed to
+// work, before giving up — this still falls through to the caller's
+// existing per-merchant catch (preserve-last-known-good) if all 3 attempts
+// fail for real.
+const LOGIN_GOTO_RETRY_DELAYS_MS = [10000, 120000];
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function gotoWithRetry(page, url, options) {
+  const attempts = LOGIN_GOTO_RETRY_DELAYS_MS.length + 1;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await page.goto(url, { timeout: 60000, ...options });
+      return;
+    } catch (err) {
+      if (i === attempts - 1) throw err;
+      const delay = LOGIN_GOTO_RETRY_DELAYS_MS[i];
+      console.warn(`  goto ${url} timed out (attempt ${i + 1}/${attempts}), retrying in ${delay / 1000}s...`);
+      await sleep(delay);
+    }
+  }
+}
+
 // Session-reuse wrapper, added 2026-08-11 after diagnosing why VYSHIKAX's
 // wallet-top-up alerts had gone silently stale for days: wallet-alert.yml
 // dispatches every 5 minutes and re-logs-in fresh (thus re-requesting a new
@@ -160,7 +194,7 @@ export async function getAuthenticatedContext(browser, {
 }
 
 export async function loginPaynixMerchant(page, loginUrl, username, password) {
-  await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
+  await gotoWithRetry(page, loginUrl, { waitUntil: 'domcontentloaded' });
   await completePaynixLogin(page, username, password);
 }
 
