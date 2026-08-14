@@ -6,6 +6,20 @@
 import 'dotenv/config';
 import { chromium } from 'playwright';
 import fs from 'node:fs';
+import path from 'node:path';
+import { completePaynixLogin, getAuthenticatedContext } from './lib/paynix-merchant-login.js';
+
+// Fixed 2026-08-14: this script predated Paynix's OTP rollout to the
+// reseller portal (2026-08-10, see lib/paynix-merchant-login.js) and did
+// a plain single-step email/password login with no OTP handling — every
+// login silently landed back on /auth/login, and
+// localStorage.getItem('paynix_access_token') returned null, surfacing
+// as an opaque "Invalid or expired token" API error rather than a login
+// failure. Switched to the same shared helper download-paynix.js already
+// uses, including session reuse (this is a one-off local script, but
+// reuse still avoids burning an OTP request if it's re-run).
+const SESSION_FILE = path.join('./data', 'paynix-sessions', 'reseller.json');
+const RESELLER_DASHBOARD_URL = 'https://reseller.paynix.co.in/dashboard';
 
 const { PAYNIX_LOGIN_URL, PAYNIX_USERNAME, PAYNIX_PASSWORD } = process.env;
 const FROM = process.argv[2]; // YYYY-MM-DD
@@ -19,16 +33,21 @@ if (!FROM || !TO) {
 
 async function run() {
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext();
-  const page = await context.newPage();
-
-  await page.goto(PAYNIX_LOGIN_URL, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('textbox', { name: 'Email address' }).fill(PAYNIX_USERNAME);
-  await page.getByRole('textbox', { name: 'Password' }).fill(PAYNIX_PASSWORD);
-  await page.getByRole('button', { name: 'Log in' }).click();
-  await page.waitForTimeout(3000);
-  await page.goto('https://reseller.paynix.co.in/dashboard', { waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(1000);
+  const { page, reused } = await getAuthenticatedContext(browser, {
+    sessionFile: SESSION_FILE,
+    dashboardUrl: RESELLER_DASHBOARD_URL,
+    performLogin: async (p) => {
+      await p.goto(PAYNIX_LOGIN_URL, { waitUntil: 'domcontentloaded' });
+      await completePaynixLogin(p, PAYNIX_USERNAME, PAYNIX_PASSWORD);
+    },
+    merchantLabel: 'Paynix reseller portal',
+  });
+  if (!page) {
+    console.error('Login backed off after a recent failure (see data/paynix-sessions/reseller.failure.json) — try again later.');
+    await browser.close();
+    process.exit(1);
+  }
+  console.log(`Logged into reseller portal${reused ? ' (reused session)' : ''}.`);
 
   const fromMs = new Date(FROM + 'T00:00:00.000Z').getTime();
   const toMs = new Date(TO + 'T23:59:59.999Z').getTime();

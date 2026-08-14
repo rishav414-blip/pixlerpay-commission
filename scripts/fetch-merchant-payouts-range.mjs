@@ -7,8 +7,19 @@ import 'dotenv/config';
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
+import { loginPaynixMerchant, getAuthenticatedContext } from './lib/paynix-merchant-login.js';
+import { getSuspendedMerchantIds } from './lib/suspended-merchants.js';
 
+// Fixed 2026-08-14: same OTP-handling gap as fetch-reseller-ledger-range.mjs
+// (see there) — this script predated Paynix's OTP rollout and had no OTP
+// handling, so every login failed. Switched to the shared helper, with
+// session reuse (own sessions dir, shared with download-paynix-merchant-
+// reports.js/download-paynix-merchant-wallets.js — a session either
+// establishes is reusable here) and suspended-merchant filtering (these
+// accounts can never log in, don't even attempt them).
 const MERCHANT_LOGIN_URL = 'https://merchant.paynix.co.in/auth/login';
+const MERCHANT_DASHBOARD_URL = 'https://merchant.paynix.co.in/dashboard';
+const SESSIONS_DIR = path.join('./data', 'paynix-sessions');
 const LOGINS_FILE = path.join('./data', 'paynix-merchant-logins.json');
 const OUT_DIR = process.argv[4] || './data/paynix-merchant-reports-range';
 
@@ -59,7 +70,16 @@ async function fetchPayouts(page, fromDate, toDate) {
 }
 
 async function run() {
-  const logins = JSON.parse(fs.readFileSync(LOGINS_FILE, 'utf-8'));
+  const allLogins = JSON.parse(fs.readFileSync(LOGINS_FILE, 'utf-8'));
+
+  const { GOOGLE_DRIVE_PAYNIX_FILE_ID, GOOGLE_DRIVE_API_KEY } = process.env;
+  const suspendedIds = await getSuspendedMerchantIds(GOOGLE_DRIVE_PAYNIX_FILE_ID, GOOGLE_DRIVE_API_KEY);
+  const suspendedLogins = allLogins.filter((l) => suspendedIds.has(l.merchantId));
+  const logins = allLogins.filter((l) => !suspendedIds.has(l.merchantId));
+  if (suspendedLogins.length) {
+    console.log(`Skipping ${suspendedLogins.length} suspended merchant(s): ${suspendedLogins.map((l) => l.merchantName).join(', ')}`);
+  }
+
   fs.mkdirSync(OUT_DIR, { recursive: true });
   console.log(`Fetching payouts from ${FROM} to ${TO} for ${logins.length} merchant(s)...`);
 
@@ -68,17 +88,22 @@ async function run() {
   let successCount = 0;
   for (const [i, login] of logins.entries()) {
     if (i > 0) await sleep(1500);
-    const context = await browser.newContext();
-    const page = await context.newPage();
+    let context;
     try {
-      console.log(`Logging into ${login.merchantName} (${login.merchantId})...`);
-      await page.goto(MERCHANT_LOGIN_URL, { waitUntil: 'domcontentloaded' });
-      await page.getByRole('textbox', { name: 'Email address' }).fill(login.username);
-      await page.getByRole('textbox', { name: 'Password' }).fill(login.password);
-      await page.getByRole('button', { name: 'Log in' }).click();
-      await page.waitForTimeout(3000);
-      await page.goto('https://merchant.paynix.co.in/dashboard', { waitUntil: 'domcontentloaded' });
-      await page.waitForTimeout(1500);
+      const sessionFile = path.join(SESSIONS_DIR, `${login.merchantId}.json`);
+      const authed = await getAuthenticatedContext(browser, {
+        sessionFile,
+        dashboardUrl: MERCHANT_DASHBOARD_URL,
+        performLogin: (p) => loginPaynixMerchant(p, MERCHANT_LOGIN_URL, login.username, login.password),
+        merchantLabel: login.merchantName,
+      });
+      if (authed.skipped) {
+        console.warn(`  Skipped ${login.merchantName} (backing off after recent login failure).`);
+        continue;
+      }
+      context = authed.context;
+      const page = authed.page;
+      console.log(`Logging into ${login.merchantName} (${login.merchantId})${authed.reused ? ' (reused session)' : ''}...`);
 
       const result = await fetchPayouts(page, FROM, TO);
       if (result.error) throw new Error(`API error: ${JSON.stringify(result.error)}`);
@@ -100,7 +125,7 @@ async function run() {
     } catch (err) {
       console.warn(`  FAILED for ${login.merchantName}: ${err.message}`);
     } finally {
-      await context.close();
+      if (context) await context.close();
     }
   }
   await browser.close();

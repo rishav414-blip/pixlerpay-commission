@@ -10,6 +10,7 @@ data/*.csv
 data/*.xlsx
 data/*.xls
 data/raw-reports/
+data/atmoon-payout-reports/
 data/gdrive-service-account.json
 data/gdrive-oauth-client.json
 data/gdrive-oauth-token.json
@@ -19,6 +20,9 @@ website/paynix-results.json
 website/pixlerpay-merchant-results.json
 website/paynix-commission-results.json
 website/paynix-wallet-log-results.json
+website/paynix-atmoon-results.json
+website/paynix-atmoon-commission-results.json
+website/paynix-atmoon-wallet-log-results.json
 data/paynix-wallet-log-snapshot.json
 data/paynix-snapshot.json
 data/paynix-snapshot-previous.json
