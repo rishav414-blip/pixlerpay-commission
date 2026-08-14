@@ -471,12 +471,16 @@
     "merchantId": "MER_B3DE4FC343D8",
     "resellerPct": 0.7,
     "resellerFlatBelow1000": 10,
-    "onboardedPct": 1.0,
+    "onboardedPct": 0.9,
     "onboardedFlatBelow1000": 12,
     "akPct": 0.1,
     "ansPct": null,
     "ansFlatBelow1000": null,
-    "group": null
+    "group": null,
+    "rateHistory": [
+      { "effectiveFrom": null, "onboardedPct": 1.0, "onboardedFlatBelow1000": 12 },
+      { "effectiveFrom": "2026-08-14", "onboardedPct": 0.9, "onboardedFlatBelow1000": 12 }
+    ]
   },
   {
     "sno": 40,
@@ -484,11 +488,15 @@
     "merchantId": "MER_59AE1E1BE1A6",
     "resellerPct": 0.7,
     "resellerFlatBelow1000": 10,
-    "onboardedPct": 1.0,
+    "onboardedPct": 0.9,
     "onboardedFlatBelow1000": 12,
     "akPct": 0.1,
     "ansPct": null,
     "ansFlatBelow1000": null,
-    "group": null
+    "group": null,
+    "rateHistory": [
+      { "effectiveFrom": null, "onboardedPct": 1.0, "onboardedFlatBelow1000": 12 },
+      { "effectiveFrom": "2026-08-14", "onboardedPct": 0.9, "onboardedFlatBelow1000": 12 }
+    ]
   }
 ]

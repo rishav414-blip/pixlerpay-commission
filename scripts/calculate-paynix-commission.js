@@ -231,6 +231,10 @@ async function main() {
 // equals import.meta.url), which would have made main() never run at all
 // when executed directly on a Windows dev machine — caught before this
 // ever shipped by testing the guard locally on Windows.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+// process.argv[1] is undefined for some invocation styles (e.g. `node -e
+// "import(...)"`, used while manually testing this file's exports) —
+// pathToFileURL(undefined) throws rather than just being falsy, so guard
+// it explicitly instead of letting that crash the import.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }
