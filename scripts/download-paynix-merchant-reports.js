@@ -61,7 +61,21 @@ async function fetchRecentPayouts(page, fromDate, toDate) {
     const payouts = [];
     while (true) {
       const url = `https://api.paynix.co.in/api/v1/merchant/portal/transactions/payouts?page=${pageNum}&per_page=${perPage}&from=${fromDate}&to=${toDate}`;
-      const res = await fetch(url, { headers });
+      // Same bug class found and fixed 2026-08-13 in
+      // download-paynix-merchant-wallets.js: a bare fetch() has no default
+      // timeout, and this one sits inside a page-by-page loop (up to 40
+      // iterations) — a single stalled network moment on any page hangs
+      // the whole job, not just one merchant, since Node's own `await
+      // page.evaluate(...)` just waits for this to settle. Confirmed
+      // 2026-08-14: refresh.yml stuck 34+ minutes on this exact step.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
+      let res;
+      try {
+        res = await fetch(url, { headers, signal: controller.signal });
+      } finally {
+        clearTimeout(timeoutId);
+      }
       const json = await res.json();
       if (!json.success) return { error: json };
       const batch = json.data || [];
