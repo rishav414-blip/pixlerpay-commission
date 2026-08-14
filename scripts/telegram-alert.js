@@ -4,7 +4,7 @@ import path from 'node:path';
 import { parseWalletTimestamp } from './lib/wallet-timestamp.js';
 import { getSuspendedMerchantIds } from './lib/suspended-merchants.js';
 
-const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALERT_SECTIONS, TELEGRAM_ATMOON_CHAT_ID, TELEGRAM_BABA_CHAT_ID, TELEGRAM_RAVINO_VIJAJ_CHAT_ID, TELEGRAM_DATSHA_CHAT_ID, GOOGLE_DRIVE_PAYNIX_FILE_ID, GOOGLE_DRIVE_API_KEY } = process.env;
+const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALERT_SECTIONS, TELEGRAM_ATMOON_CHAT_ID, TELEGRAM_BABA_CHAT_ID, TELEGRAM_RAVINO_VIJAJ_CHAT_ID, TELEGRAM_DATSHA_CHAT_ID, TELEGRAM_PAYNIX_ALL_TOPUPS_CHAT_ID, GOOGLE_DRIVE_PAYNIX_FILE_ID, GOOGLE_DRIVE_API_KEY } = process.env;
 
 // Per-merchant wallet-top-up-only routing to dedicated Telegram groups,
 // each instead of (not in addition to) the default chat. Failed-payout
@@ -279,6 +279,21 @@ async function run() {
       }
       const msg = buildTopupMessage(d, (id) => route.merchantIds.has(id));
       if (msg) messages.push({ text: msg, chatId: route.chatId });
+    }
+
+    // Added 2026-08-14 per explicit request: a "firehose" group that gets
+    // every Paynix merchant's wallet top-up alerts, IN ADDITION TO (not
+    // instead of) the existing per-merchant routing above and the default
+    // chat. Unlike TOPUP_ROUTES, this one has no merchantIds filter — it's
+    // always the full set, so it doesn't need — and must not be added to —
+    // ALL_ROUTED_MERCHANT_IDS (that set exists to keep the *default* chat's
+    // feed from double-showing routed merchants; this broadcast group is
+    // intentionally exempt from that exclusion).
+    if (TELEGRAM_PAYNIX_ALL_TOPUPS_CHAT_ID) {
+      const allMsg = buildTopupMessage(d, () => true);
+      if (allMsg) messages.push({ text: allMsg, chatId: TELEGRAM_PAYNIX_ALL_TOPUPS_CHAT_ID });
+    } else {
+      console.log('TELEGRAM_PAYNIX_ALL_TOPUPS_CHAT_ID not set — the all-merchants wallet-topup broadcast is being skipped.');
     }
   }
 
