@@ -54,17 +54,45 @@ import path from 'node:path';
 // fail for real.
 const LOGIN_GOTO_RETRY_DELAYS_MS = [10000, 120000];
 
+// Guards against a design flaw found the same day this retry was added
+// (2026-08-14): the 2-minute retry is a good bet when ONE merchant's
+// account hits a one-off blip, but confirmed live that when the issue is
+// systemic instead — every merchant AND the reseller portal failing in
+// the same run, `net::ERR_CONNECTION_TIMED_OUT` on the reseller login
+// suggesting the CI runner's whole network path to Paynix is blocked,
+// not any one account — retrying each of ~20 merchants for up to 2
+// minutes compounds into 15-40+ minutes of pure waiting on a retry that
+// was never going to succeed, risking retriggering the job-timeout hang
+// fixed earlier the same day. Once 2 consecutive merchants fail their
+// very first attempt, treat it as evidence of a systemic outage for the
+// rest of this run — skip the retry delays (single fast attempt only)
+// so the remaining merchants fail in seconds, not minutes, and the
+// existing per-merchant preserve-baseline/backoff handling (unaffected
+// by this) takes over immediately instead of waiting to find out.
+// Resets naturally every run, since each is a fresh Node process.
+let consecutiveFirstAttemptFailures = 0;
+const SYSTEMIC_FAILURE_THRESHOLD = 2;
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function gotoWithRetry(page, url, options) {
+  if (consecutiveFirstAttemptFailures >= SYSTEMIC_FAILURE_THRESHOLD) {
+    // Already have enough evidence this run that retrying won't help —
+    // one fast attempt, no retry delay, so a systemic outage fails this
+    // run in seconds per merchant instead of minutes.
+    await page.goto(url, { timeout: 60000, ...options });
+    return;
+  }
   const attempts = LOGIN_GOTO_RETRY_DELAYS_MS.length + 1;
   for (let i = 0; i < attempts; i++) {
     try {
       await page.goto(url, { timeout: 60000, ...options });
+      consecutiveFirstAttemptFailures = 0;
       return;
     } catch (err) {
+      if (i === 0) consecutiveFirstAttemptFailures++;
       if (i === attempts - 1) throw err;
       const delay = LOGIN_GOTO_RETRY_DELAYS_MS[i];
       console.warn(`  goto ${url} timed out (attempt ${i + 1}/${attempts}), retrying in ${delay / 1000}s...`);
