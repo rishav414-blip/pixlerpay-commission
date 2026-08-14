@@ -60,14 +60,29 @@ import path from 'node:path';
 // the `browser` handle needed to open a new context — gotoWithRetry here
 // is now just a single bounded attempt (60s), no retry of its own.
 //
-// Same systemic-outage guard as v1, moved to this level: once 2
-// consecutive merchants fail their very first attempt in a run, treat it
-// as evidence retrying won't help and skip the 2-minute-wait-and-retry
-// for the rest of that run — one fast attempt only, so a real outage
-// still fails the whole run in a normal timeframe instead of timing out
-// partway through. Resets every run (fresh Node process each time).
-let consecutiveFirstAttemptFailures = 0;
-const SYSTEMIC_FAILURE_THRESHOLD = 2;
+// Systemic-outage guard, v3 (2026-08-14): v2's guard counted *consecutive*
+// first-attempt failures and reset to 0 on any success. Confirmed live the
+// same day that this doesn't hold during an intermittent outage — some
+// merchants reuse a cached session and succeed instantly while others fail,
+// which keeps resetting the counter before it ever reaches the threshold.
+// Result: far more than 2 merchants each paid the full ~2min retry cost in
+// the same run, and the job blew through its 15-minute timeout again
+// (confirmed: run stuck 16+ min on the scrape step, health-check reporting
+// zero successful runs in 5 attempts).
+//
+// Fixed with two guards that can't be undone by an interleaved success:
+// - RETRY_BUDGET: a running total of retries *used* this run, capped at 2,
+//   that never resets.
+// - RETRY_DEADLINE_MS: once this much wall-clock time has passed since this
+//   script's process started (i.e. since the scrape step began — setup
+//   steps like npm ci/playwright install already ran before this), no more
+//   retries are allowed regardless of the budget, since there may not be
+//   enough of the job's 15-minute ceiling left for a 2-minute-plus retry
+//   and the remaining merchants after it.
+const SCRIPT_START_MS = Date.now();
+const RETRY_DEADLINE_MS = 5 * 60 * 1000;
+const RETRY_BUDGET = 2;
+let retriesUsed = 0;
 const FRESH_RETRY_DELAY_MS = 120000;
 
 function sleep(ms) {
@@ -174,9 +189,10 @@ export async function getAuthenticatedContext(browser, {
   // Up to 2 attempts, each with a completely fresh browser context (no
   // storageState, no cookies, no cached anything) — see the comment above
   // gotoWithRetry for why this is a whole-context retry now, not just a
-  // re-navigation. The systemic-outage guard skips the wait-and-retry
-  // once this run already has evidence retrying won't help.
-  const allowRetry = consecutiveFirstAttemptFailures < SYSTEMIC_FAILURE_THRESHOLD;
+  // re-navigation. The systemic-outage guard (budget + deadline, see above)
+  // skips the wait-and-retry once this run already has evidence retrying
+  // won't help or isn't affordable within the job's time ceiling.
+  const allowRetry = retriesUsed < RETRY_BUDGET && (Date.now() - SCRIPT_START_MS) < RETRY_DEADLINE_MS;
   const maxAttempts = allowRetry ? 2 : 1;
   let lastErr;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -184,10 +200,10 @@ export async function getAuthenticatedContext(browser, {
     const page = await context.newPage();
     try {
       await performLogin(page);
-      consecutiveFirstAttemptFailures = 0;
-      // Successful login clears any prior failure record — this run's
-      // success ends that outage, and a future failure should alert
-      // fresh, not be treated as a continuation of the old one.
+      // Note: does NOT reset retriesUsed/deadline — an interleaved success
+      // during an intermittent outage must not un-arm the guard for the
+      // merchants still to come. Only clears this merchant's own failure
+      // record.
       if (failureStateFile && fs.existsSync(failureStateFile)) fs.unlinkSync(failureStateFile);
       if (sessionFile) {
         fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
@@ -197,8 +213,8 @@ export async function getAuthenticatedContext(browser, {
     } catch (err) {
       lastErr = err;
       await context.close();
-      if (attempt === 1) consecutiveFirstAttemptFailures++;
       if (attempt < maxAttempts) {
+        retriesUsed++;
         console.warn(`  Login attempt ${attempt} for ${merchantLabel} failed (${err.message.slice(0, 80)}...) — waiting ${FRESH_RETRY_DELAY_MS / 60000}min for a completely fresh retry (new context, no cached session)...`);
         await sleep(FRESH_RETRY_DELAY_MS);
       }
