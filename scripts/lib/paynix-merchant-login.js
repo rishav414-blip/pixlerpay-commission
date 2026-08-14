@@ -39,66 +39,51 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Same class of issue download-paynix.js's own gotoWithRetry was built for
-// (see its comment: "the reseller portal's first page load is sometimes
-// slow to respond... from a distant GitHub Actions runner"), never applied
-// here — confirmed 2026-08-14 hitting the per-merchant login flow too:
-// health-check reported Baba Enterprises, RAVINO TRADERS, Parakeet
-// Engineering, and Suraj Wellness all failing with a bare 30s
-// page.goto timeout navigating to /auth/login, and the user's own manual
-// retry ~2 minutes later succeeded — a transient network/server-side slow
-// window, not a real per-account problem. Retry once quickly (10s, catches
-// a brief blip) then once after the ~2min gap that's actually confirmed to
-// work, before giving up — this still falls through to the caller's
-// existing per-merchant catch (preserve-last-known-good) if all 3 attempts
-// fail for real.
-const LOGIN_GOTO_RETRY_DELAYS_MS = [10000, 120000];
-
-// Guards against a design flaw found the same day this retry was added
-// (2026-08-14): the 2-minute retry is a good bet when ONE merchant's
-// account hits a one-off blip, but confirmed live that when the issue is
-// systemic instead — every merchant AND the reseller portal failing in
-// the same run, `net::ERR_CONNECTION_TIMED_OUT` on the reseller login
-// suggesting the CI runner's whole network path to Paynix is blocked,
-// not any one account — retrying each of ~20 merchants for up to 2
-// minutes compounds into 15-40+ minutes of pure waiting on a retry that
-// was never going to succeed, risking retriggering the job-timeout hang
-// fixed earlier the same day. Once 2 consecutive merchants fail their
-// very first attempt, treat it as evidence of a systemic outage for the
-// rest of this run — skip the retry delays (single fast attempt only)
-// so the remaining merchants fail in seconds, not minutes, and the
-// existing per-merchant preserve-baseline/backoff handling (unaffected
-// by this) takes over immediately instead of waiting to find out.
-// Resets naturally every run, since each is a fresh Node process.
+// Retry design settled 2026-08-14 after two iterations on the same day:
+//
+// v1 retried just the goto (page.goto to /auth/login) on the SAME page/
+// context, 10s then 120s. Worked for the one-off case it was built from,
+// but a live systemic outage (every merchant AND the reseller portal
+// failing together, net::ERR_CONNECTION_TIMED_OUT on the reseller login —
+// the CI runner's whole network path to Paynix blocked, not any one
+// account) meant every merchant paid the full ~2min+ retry before failing
+// anyway, compounding into 15-40+ minutes and re-triggering the very
+// job-timeout hang fixed earlier that day.
+//
+// v2 (this version), per explicit request: retry the *whole* login
+// attempt, not just the navigation — and do the retry with a completely
+// fresh browser context (no storageState, no cookies, no cached
+// anything from the failed attempt), on the theory that a stuck attempt
+// might be carrying bad state (a hung connection, stale DNS resolution)
+// that a plain re-navigation on the same page/context wouldn't clear.
+// Lives in getAuthenticatedContext below, since only that function has
+// the `browser` handle needed to open a new context — gotoWithRetry here
+// is now just a single bounded attempt (60s), no retry of its own.
+//
+// Same systemic-outage guard as v1, moved to this level: once 2
+// consecutive merchants fail their very first attempt in a run, treat it
+// as evidence retrying won't help and skip the 2-minute-wait-and-retry
+// for the rest of that run — one fast attempt only, so a real outage
+// still fails the whole run in a normal timeframe instead of timing out
+// partway through. Resets every run (fresh Node process each time).
 let consecutiveFirstAttemptFailures = 0;
 const SYSTEMIC_FAILURE_THRESHOLD = 2;
+const FRESH_RETRY_DELAY_MS = 120000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// 20s, not Playwright's 30s default and not the 60s used before this
+// pass — budgeted so a full systemic outage (every one of ~20 merchants
+// failing) still fits the 15-minute wallet-alert.yml job timeout even
+// with 2 merchants paying the full retry-with-2min-wait cost before the
+// circuit breaker below kicks in: 2 × (20s + 120s + 20s) + 18 × 20s ≈
+// 11.3 min, leaving real margin instead of running right up to the cap.
+const GOTO_TIMEOUT_MS = 20000;
+
 async function gotoWithRetry(page, url, options) {
-  if (consecutiveFirstAttemptFailures >= SYSTEMIC_FAILURE_THRESHOLD) {
-    // Already have enough evidence this run that retrying won't help —
-    // one fast attempt, no retry delay, so a systemic outage fails this
-    // run in seconds per merchant instead of minutes.
-    await page.goto(url, { timeout: 60000, ...options });
-    return;
-  }
-  const attempts = LOGIN_GOTO_RETRY_DELAYS_MS.length + 1;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      await page.goto(url, { timeout: 60000, ...options });
-      consecutiveFirstAttemptFailures = 0;
-      return;
-    } catch (err) {
-      if (i === 0) consecutiveFirstAttemptFailures++;
-      if (i === attempts - 1) throw err;
-      const delay = LOGIN_GOTO_RETRY_DELAYS_MS[i];
-      console.warn(`  goto ${url} timed out (attempt ${i + 1}/${attempts}), retrying in ${delay / 1000}s...`);
-      await sleep(delay);
-    }
-  }
+  await page.goto(url, { timeout: GOTO_TIMEOUT_MS, ...options });
 }
 
 // Session-reuse wrapper, added 2026-08-11 after diagnosing why VYSHIKAX's
@@ -186,39 +171,53 @@ export async function getAuthenticatedContext(browser, {
     }
   }
 
-  const context = await browser.newContext(contextOptions);
-  const page = await context.newPage();
-  try {
-    await performLogin(page);
-  } catch (err) {
-    // Don't leak the context if login fails — the caller's own try/catch
-    // handles the error itself (e.g. falling back to a preserved baseline),
-    // but it never gets a context reference to close in that case.
-    await context.close();
-    if (failureStateFile) {
-      fs.mkdirSync(path.dirname(failureStateFile), { recursive: true });
-      fs.writeFileSync(failureStateFile, JSON.stringify({
-        merchantLabel,
-        lastAttemptAt: new Date().toISOString(),
-        lastErrorMessage: err.message,
-        consecutiveFailures: (priorFailure?.consecutiveFailures || 0) + 1,
-        // telegram-alert.js flips this to true after sending the critical
-        // alert, so a merchant stuck failing across several backed-off
-        // retries only alerts once per distinct outage, not every cycle.
-        alerted: false,
-      }, null, 2));
+  // Up to 2 attempts, each with a completely fresh browser context (no
+  // storageState, no cookies, no cached anything) — see the comment above
+  // gotoWithRetry for why this is a whole-context retry now, not just a
+  // re-navigation. The systemic-outage guard skips the wait-and-retry
+  // once this run already has evidence retrying won't help.
+  const allowRetry = consecutiveFirstAttemptFailures < SYSTEMIC_FAILURE_THRESHOLD;
+  const maxAttempts = allowRetry ? 2 : 1;
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const context = await browser.newContext(contextOptions);
+    const page = await context.newPage();
+    try {
+      await performLogin(page);
+      consecutiveFirstAttemptFailures = 0;
+      // Successful login clears any prior failure record — this run's
+      // success ends that outage, and a future failure should alert
+      // fresh, not be treated as a continuation of the old one.
+      if (failureStateFile && fs.existsSync(failureStateFile)) fs.unlinkSync(failureStateFile);
+      if (sessionFile) {
+        fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+        await context.storageState({ path: sessionFile });
+      }
+      return { context, page, reused: false };
+    } catch (err) {
+      lastErr = err;
+      await context.close();
+      if (attempt === 1) consecutiveFirstAttemptFailures++;
+      if (attempt < maxAttempts) {
+        console.warn(`  Login attempt ${attempt} for ${merchantLabel} failed (${err.message.slice(0, 80)}...) — waiting ${FRESH_RETRY_DELAY_MS / 60000}min for a completely fresh retry (new context, no cached session)...`);
+        await sleep(FRESH_RETRY_DELAY_MS);
+      }
     }
-    throw err;
   }
-  // Successful login clears any prior failure record — this run's success
-  // ends that outage, and a future failure should alert fresh, not be
-  // treated as a continuation of the old one.
-  if (failureStateFile && fs.existsSync(failureStateFile)) fs.unlinkSync(failureStateFile);
-  if (sessionFile) {
-    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
-    await context.storageState({ path: sessionFile });
+  if (failureStateFile) {
+    fs.mkdirSync(path.dirname(failureStateFile), { recursive: true });
+    fs.writeFileSync(failureStateFile, JSON.stringify({
+      merchantLabel,
+      lastAttemptAt: new Date().toISOString(),
+      lastErrorMessage: lastErr.message,
+      consecutiveFailures: (priorFailure?.consecutiveFailures || 0) + 1,
+      // telegram-alert.js flips this to true after sending the critical
+      // alert, so a merchant stuck failing across several backed-off
+      // retries only alerts once per distinct outage, not every cycle.
+      alerted: false,
+    }, null, 2));
   }
-  return { context, page, reused: false };
+  throw lastErr;
 }
 
 export async function loginPaynixMerchant(page, loginUrl, username, password) {
