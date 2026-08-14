@@ -231,10 +231,20 @@ async function checkWorkflowHealth() {
   }
   for (const { file: wf, warnMs, criticalMs } of WORKFLOWS) {
     try {
-      const res = await fetch(
-        `https://api.github.com/repos/${WORKFLOWS_REPO}/actions/workflows/${wf}/runs?per_page=5`,
-        { headers: { Authorization: `Bearer ${GITHUB_TOKEN}`, Accept: 'application/vnd.github+json' } }
-      );
+      // Same bug class fixed 2026-08-13/14 elsewhere (no default timeout
+      // on a bare fetch()) — applied here too since this runs once per
+      // workflow in a loop, same shape as the ones that actually hung.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      let res;
+      try {
+        res = await fetch(
+          `https://api.github.com/repos/${WORKFLOWS_REPO}/actions/workflows/${wf}/runs?per_page=5`,
+          { headers: { Authorization: `Bearer ${GITHUB_TOKEN}`, Accept: 'application/vnd.github+json' }, signal: controller.signal }
+        );
+      } finally {
+        clearTimeout(timeoutId);
+      }
       if (!res.ok) {
         flag('WARNING', `Workflow ${wf}: could not query run history (HTTP ${res.status}).`);
         continue;
@@ -278,11 +288,19 @@ async function sendTelegramMessage(text) {
     return;
   }
   try {
-    const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text, parse_mode: 'HTML' }),
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    let res;
+    try {
+      res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text, parse_mode: 'HTML' }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
     if (!res.ok) {
       console.error(`Telegram API error ${res.status}: ${await res.text()}`);
     }

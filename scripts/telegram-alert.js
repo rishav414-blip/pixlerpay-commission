@@ -95,11 +95,23 @@ const MAX_WALLET_ENTRIES_PER_MERCHANT = 2;
 
 async function sendTelegramMessage(text, chatId) {
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
-  });
+  // Same bug class fixed 2026-08-13/14 in the Paynix-facing fetch calls
+  // (no default timeout on a bare fetch()) — applied here too for
+  // completeness, even though Telegram's API is generally reliable and
+  // this isn't in a big loop like those were.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Telegram API error ${res.status}: ${body}`);
